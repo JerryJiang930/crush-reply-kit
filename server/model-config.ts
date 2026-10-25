@@ -35,15 +35,42 @@ export type DecisionsConfig = {
   apiKey: string;
   protocol: "decisions";
 };
+export type LocalConfig = {
+  engine: "local";
+  provider: string;
+  name: string;
+  endpoint: string;
+  model: string;
+  apiKey: string;
+  protocol: "local";
+  dialect: "systemone" | "laya" | "anyjev";
+};
 export type ActiveConfig =
-  ProviderConfig | LlmConfig | DecisionsConfig | LiquidConfig;
+  ProviderConfig | LlmConfig | DecisionsConfig | LiquidConfig | LocalConfig;
+// Maps the preset id to the wire dialect the local server speaks.
+// Laya in JEV_STRICT mode speaks the System One wire protocol (/v1/systemone),
+// so the "laya" preset uses the verified "systemone" dialect. The dedicated
+// "laya" dialect (native /decide route) is experimental and not yet run against
+// a live server. AnyJev wraps a local LLM and is also unverified here.
+const LOCAL_DIALECTS: Record<string, LocalConfig["dialect"]> = {
+  laya: "systemone",
+  anyjev: "anyjev",
+  "local-server": "systemone",
+};
 export const modelConfigPath = resolve(
   process.env.CRUSH_CONFIG_PATH || ".runtime/model.json",
 );
 const schema = z
   .object({
     preset: z.string().max(80),
-    protocol: z.enum(["openai", "anthropic", "jev", "decisions", "systemone"]),
+    protocol: z.enum([
+      "openai",
+      "anthropic",
+      "jev",
+      "decisions",
+      "systemone",
+      "local",
+    ]),
     baseUrl: z.string().trim().max(500),
     model: z.string().trim().max(200),
     apiKey: z.string().trim().max(4096),
@@ -112,7 +139,9 @@ export function parseSettings(input: unknown): ModelSettings {
   s.baseUrl = u.href
     .replace(/\/+$/, "")
     .replace(/\/(chat\/completions|messages)$/, "");
-  if (s.preset !== "custom" && s.baseUrl !== preset.baseUrl)
+  // Local engines are user-operated, so their address has to be adjustable
+  // (ports, containers, another machine on the LAN).
+  if (s.preset !== "custom" && s.protocol !== "local" && s.baseUrl !== preset.baseUrl)
     throw new ConfigurationError(
       "此平台的地址固定；其他区域或代理地址请选择“其他兼容服务”。",
     );
@@ -132,6 +161,17 @@ export function settingsConfig(s: ModelSettings): ActiveConfig {
       model: "gpt-6-luna",
       apiKey: s.apiKey,
       protocol: "decisions",
+    };
+  if (s.protocol === "local")
+    return {
+      engine: "local",
+      provider: s.preset,
+      name: MODEL_PRESETS.find((p) => p.id === s.preset)!.name,
+      endpoint: s.baseUrl,
+      model: s.model,
+      apiKey: s.apiKey,
+      protocol: "local",
+      dialect: LOCAL_DIALECTS[s.preset] ?? "systemone",
     };
   return {
     engine: "llm",
@@ -180,7 +220,9 @@ export function configFingerprint(config: ActiveConfig): string {
             ? "decisions-adapter-v1"
             : config.engine === "liquid"
               ? "liquid-adapter-v1"
-              : "llm-adapter-v2"
+              : config.engine === "local"
+                ? `local-adapter-v1:${config.dialect}`
+                : "llm-adapter-v2"
           : "llm-adapter-v1",
       ]),
     )

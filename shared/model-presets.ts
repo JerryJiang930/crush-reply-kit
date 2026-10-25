@@ -144,10 +144,34 @@ export const MODEL_PRESETS = [
     model: "jev-1.13-free",
     keyUrl: "https://opencode.ai/console/",
   },
+  {
+    id: "laya",
+    name: "Laya · 本地判断模型",
+    protocol: "local",
+    baseUrl: "http://127.0.0.1:8421",
+    model: "convaiinnovations/laya-multilingual",
+    keyUrl: "",
+  },
+  {
+    id: "anyjev",
+    name: "AnyJev · 本地 LLM 标定",
+    protocol: "local",
+    baseUrl: "http://127.0.0.1:8421",
+    model: "qwen3:8b",
+    keyUrl: "",
+  },
+  {
+    id: "local-server",
+    name: "本机判断服务（System One 兼容）",
+    protocol: "local",
+    baseUrl: "http://127.0.0.1:8421",
+    model: "local-decision-engine",
+    keyUrl: "",
+  },
 ] as const;
 export type ModelSettings = {
   preset: string;
-  protocol: "openai" | "anthropic" | "jev" | "decisions" | "systemone";
+  protocol: "openai" | "anthropic" | "jev" | "decisions" | "systemone" | "local";
   baseUrl: string;
   model: string;
   apiKey: string;

@@ -1,0 +1,19 @@
+[
+  {
+    "peer": "小满",
+    "messages": [
+      { "id": "a1", "sender": "other", "text": "今天加班好累", "timestamp": null, "kind": "text" },
+      { "id": "b1", "sender": "self", "text": "辛苦啦，早点休息", "timestamp": null, "kind": "text" },
+      { "id": "a2", "sender": "other", "text": "周末想去哪家店吃饭？", "timestamp": null, "kind": "text" },
+      { "id": "b2", "sender": "self", "text": "你定，我都行", "timestamp": null, "kind": "text" }
+    ]
+  },
+  {
+    "peer": "阿哲",
+    "messages": [
+      { "id": "c1", "sender": "other", "text": "在忙吗", "timestamp": null, "kind": "text" },
+      { "id": "c2", "sender": "self", "text": "刚开完会，怎么了", "timestamp": null, "kind": "text" },
+      { "id": "c3", "sender": "other", "text": "没事，你先忙", "timestamp": null, "kind": "text" }
+    ]
+  }
+]
