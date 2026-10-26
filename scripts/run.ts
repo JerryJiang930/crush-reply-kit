@@ -11,7 +11,12 @@
 // WECHAT_DECRYPT_URL to enable it — requires you to run 328336690/wechat-decrypt
 // yourself with admin rights, and to set ALLOWED_PEERS to the peers you may
 // process. Do not run it against peers who have not consented.
-import { runPipeline } from "../server/pipeline";
+//
+// The pipeline itself is exported as runOnce() so scripts/up.ts can boot the
+// local services and then call it in-process, the same way upstream's start.ts
+// simply imports server/index and lets it run.
+import { pathToFileURL } from "node:url";
+import { runPipeline, type PipelineResult } from "../server/pipeline";
 import {
   createManualSource,
   createWeChatDecryptSource,
@@ -23,25 +28,33 @@ function env(key: string, fallback = ""): string {
   return (process.env[key] ?? fallback).trim();
 }
 
-const decisionConfig: LocalConfig = {
-  engine: "local",
-  provider: env("LOCAL_PROVIDER", "laya"),
-  name: "Local decision engine",
-  endpoint: env("LOCAL_ENDPOINT", "http://127.0.0.1:8421"),
-  model: env("LOCAL_MODEL", "convaiinnovations/laya-multilingual"),
-  apiKey: env("LOCAL_API_KEY", "local"),
-  protocol: "local",
-  dialect: "systemone",
-};
+/** One full IN -> THINK -> OUT pass. Returns the per-session results. */
+export async function runOnce(): Promise<PipelineResult[]> {
+  const decisionConfig: LocalConfig = {
+    engine: "local",
+    provider: env("LOCAL_PROVIDER", "laya"),
+    name: "Local decision engine",
+    endpoint: env("LOCAL_ENDPOINT", "http://127.0.0.1:8421"),
+    model: env("LOCAL_MODEL", "convaiinnovations/laya-multilingual"),
+    apiKey: env("LOCAL_API_KEY", "local"),
+    protocol: "local",
+    dialect: "systemone",
+  };
 
-const deliverConfig = { mode: (env("DELIVER_MODE", "print") === "clipboard" ? "clipboard" : "print") as "clipboard" | "print" };
+  const deliverConfig = {
+    mode: (env("DELIVER_MODE", "print") === "clipboard" ? "clipboard" : "print") as
+      | "clipboard"
+      | "print",
+  };
 
-const sourceKind = env("SOURCE", "manual");
-const allowedPeers = env("ALLOWED_PEERS").split(",").map((s) => s.trim()).filter(Boolean);
+  const sourceKind = env("SOURCE", "manual");
+  const allowedPeers = env("ALLOWED_PEERS")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 
-const draft = resolveChatConfig();
+  const draft = resolveChatConfig();
 
-async function main() {
   const source =
     sourceKind === "wechat-decrypt"
       ? createWeChatDecryptSource({
@@ -59,7 +72,8 @@ async function main() {
     console.error(
       "[replysmith] 伦理红线：开启微信抓取前必须设置 ALLOWED_PEERS，只处理你已登记的会话。已退出。",
     );
-    process.exit(2);
+    process.exitCode = 2;
+    return [];
   }
 
   const sinceMs = env("SINCE_MS") ? Number(env("SINCE_MS")) : 0;
@@ -76,14 +90,23 @@ async function main() {
   });
 
   for (const r of results) {
-    console.log(`\n=== ${r.peer} === action=${r.action} drafted=${r.drafted} delivered=${r.delivered}`);
+    console.log(
+      `\n=== ${r.peer} === action=${r.action} drafted=${r.drafted} delivered=${r.delivered}`,
+    );
     console.log(`策略：${r.strategy}`);
     console.log(r.text);
   }
   console.log(`\n[replysmith] 处理完成：${results.length} 个会话`);
+  return results;
 }
 
-main().catch((err) => {
-  console.error("[replysmith] 运行失败：", err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+// Only run when invoked directly, so importing this file (up.ts) has no effect.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runOnce().catch((err) => {
+    console.error(
+      "[replysmith] 运行失败：",
+      err instanceof Error ? err.message : err,
+    );
+    process.exit(1);
+  });
+}
