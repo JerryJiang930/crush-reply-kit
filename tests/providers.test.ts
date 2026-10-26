@@ -186,7 +186,7 @@ test("OpenCode 网页与环境配置锁定免费 Jev；拒绝借用其他平台 
   let calls = 0;
   const mock: typeof fetch = async (url, options) => {
     calls++;
-    assert.equal(url, "https://opencode.ai/inference/v1/systemone");
+    assert.equal(url, "https://opencode.ai/zen/v1/systemone");
     assert.equal(JSON.parse(String(options?.body)).model, "jev-1.13-free");
     return new Response("private-upstream-body test-only-key", { status: 451 });
   };
