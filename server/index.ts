@@ -153,6 +153,16 @@ app.post("/api/pipeline", async (req, res) => {
     res.status(400).json({ error: "请求格式不正确，请校正后重试。" });
     return;
   }
+  // 界面上拦一道，这里再拦一道：缺了设定，判断就是拿半份材料做出来的。
+  if (valid.data.source.kind === "wechat") {
+    const p = valid.data.profile;
+    if (!p?.age?.trim() || !p.role?.trim() || !p.relationNote?.trim()) {
+      res.status(400).json({
+        error: "先填「对方是谁」：年龄、身份、你们什么关系。这三项决定判断的基准。",
+      });
+      return;
+    }
+  }
   const controller = new AbortController();
   res.on("close", () => {
     if (!res.writableEnded) controller.abort();

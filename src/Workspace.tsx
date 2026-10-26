@@ -535,6 +535,14 @@ export default function Workspace() {
       let source: unknown;
       if (tab === "wechat") {
         if (!peer) throw new Error("先在左边选一个人。");
+        // 年龄、身份、什么关系，聊天记录里读不出来。缺了就是拿半份材料去判断，
+        // 出来的人不是这个人。这里必须拦住。
+        if (!age.trim() || !role.trim() || !relationNote.trim()) {
+          setProfileOpen(true);
+          throw new Error(
+            "先把「对方是谁」填完：年龄、身份、你们什么关系。这三项决定判断的基准。",
+          );
+        }
         // 明文快照是死的，不先解一遍，新消息永远进不来。
         setNotice("正在同步微信记录，十几秒…");
         const synced = await fetch("/api/peers/sync", { method: "POST" });
@@ -771,19 +779,19 @@ export default function Workspace() {
           <div className="ws-modal" onClick={(e) => e.stopPropagation()}>
             <h3>对方是谁</h3>
             <p className="ws-hint" style={{ marginBottom: 14 }}>
-              聊天记录里读不出来的，只能你补。填了写出来的句子才像在跟这个人说话。
+              这三项是判断的前提，聊天记录里读不出来，只能你补。缺一项不让开始。
             </p>
             <div className="ws-form">
               <div className="ws-row">
                 <input
                   value={age}
                   onChange={(e) => setAge(e.target.value)}
-                  placeholder="年龄"
+                  placeholder="年龄（必填）"
                 />
                 <input
                   value={role}
                   onChange={(e) => setRole(e.target.value)}
-                  placeholder="身份 / 职业"
+                  placeholder="身份 / 职业（必填）"
                 />
               </div>
               <input
@@ -794,7 +802,7 @@ export default function Workspace() {
               <input
                 value={relationNote}
                 onChange={(e) => setRelationNote(e.target.value)}
-                placeholder="你们什么关系：比如认识一段时间的朋友，不暧昧"
+                placeholder="你们什么关系（必填）：比如认识一段时间的朋友，不暧昧"
               />
               <div className="ws-form-actions">
                 <button className="primary" onClick={() => void saveProfile()}>
