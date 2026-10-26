@@ -174,11 +174,13 @@ export function buildDraftPrompt(
   actionKey: string = overview.action,
   profile?: Profile,
   signals?: string,
+  earlier?: string,
 ): { system: string; user: string } {
   const action = ACTIONS[actionKey] ?? ACTIONS.insufficient;
   return {
     system: DRAFT_SYSTEM_PROMPT,
     user:
+      (earlier ? `更早聊过的（摘要）：\n${earlier}\n\n` : "") +
       `对话最近内容：\n${recent}\n\n` +
       (signals
         ? `本地判断模型对这段对话的评分（是概率，只当语气参考，别把数字写进回复）：\n${signals}\n\n`
@@ -196,6 +198,8 @@ export type DraftDeps = {
   recent: string;
   count?: number;
   fetchImpl?: typeof fetch;
+  /** 更早部分的摘要，比 recent 更早。 */
+  earlier?: string;
   /** 对方是谁，聊天记录读不出来的那些。 */
   profile?: Profile;
   /** judgmentSignals() 打好的判断摘要，进提示词。 */
@@ -231,6 +235,7 @@ export async function draftCandidates(
         action,
         deps.profile,
         deps.signals,
+        deps.earlier,
       );
       try {
         const result = await chatComplete(

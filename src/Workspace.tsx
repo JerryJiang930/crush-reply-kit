@@ -44,6 +44,14 @@ type DraftView = {
   token: string;
 };
 
+type PeerRow = {
+  peer: string;
+  name: string;
+  count: number;
+  lastMs: number;
+  profile?: { age?: string; role?: string; note?: string };
+};
+
 const LS = "replysmith.workspace";
 
 function loadSaved(): Record<string, string> {
@@ -52,6 +60,17 @@ function loadSaved(): Record<string, string> {
   } catch {
     return {};
   }
+}
+
+/** 会话列表里的时间：今天给时分，更早给日期。 */
+function when(ms: number): string {
+  if (!ms) return "";
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  if (d.toDateString() === now.toDateString())
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
 async function post<T>(url: string, body: unknown, signal?: AbortSignal): Promise<T> {
@@ -362,6 +381,9 @@ export default function Workspace() {
   const [dbDir, setDbDir] = useState(saved.dbDir ?? "");
   const [mappingFile, setMappingFile] = useState(saved.mappingFile ?? "");
   const [peer, setPeer] = useState(saved.peer ?? "");
+  const [peers, setPeers] = useState<PeerRow[]>([]);
+  const [peersBusy, setPeersBusy] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [raw, setRaw] = useState("");
   const [selfName, setSelfName] = useState(saved.selfName ?? "我");
   const [age, setAge] = useState(saved.age ?? "");
@@ -385,6 +407,55 @@ export default function Workspace() {
       JSON.stringify({ dbDir, mappingFile, peer, selfName, age, role, note }),
     );
   }, [dbDir, mappingFile, peer, selfName, age, role, note]);
+
+  const loadPeers = useCallback(async () => {
+    if (!dbDir || !mappingFile) {
+      setError("先填解密目录和映射文件。");
+      return;
+    }
+    setPeersBusy(true);
+    setError("");
+    try {
+      const q = new URLSearchParams({ dbDir, mappingFile });
+      const res = await fetch(`/api/peers?${q}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "读不出会话列表");
+      setPeers(data.peers ?? []);
+      if (!data.peers?.length) setNotice("这个库里没读到会话。");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setPeersBusy(false);
+    }
+  }, [dbDir, mappingFile]);
+
+  function pickPeer(p: PeerRow) {
+    setPeer(p.peer);
+    setAge(p.profile?.age ?? "");
+    setRole(p.profile?.role ?? "");
+    setNote(p.profile?.note ?? "");
+    // 第一次点这个人就问一句「对方是谁」——这些聊天记录里读不出来。
+    if (!p.profile) setProfileOpen(true);
+  }
+
+  async function saveProfile() {
+    try {
+      await fetch("/api/peers/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ peer, age, role, note }),
+      });
+      setPeers((old) =>
+        old.map((p) =>
+          p.peer === peer ? { ...p, profile: { age, role, note } } : p,
+        ),
+      );
+    } catch {
+      /* 设定存不上不影响判断，下次再问一遍 */
+    } finally {
+      setProfileOpen(false);
+    }
+  }
 
   const openJudge = useCallback(async () => {
     setModelOpen(true);
@@ -489,16 +560,32 @@ export default function Workspace() {
                   placeholder="…\decrypted\wechat-mapping.json"
                 />
               </label>
-              <label>
-                <span>分析对象</span>
-                <input
-                  value={peer}
-                  onChange={(e) => setPeer(e.target.value)}
-                  placeholder="某个人的微信昵称或备注"
-                />
-              </label>
+              <button
+                className="ghost"
+                disabled={peersBusy || !dbDir || !mappingFile}
+                onClick={() => void loadPeers()}
+              >
+                {peersBusy ? "读取中…" : peers.length ? "刷新会话" : "读取会话"}
+              </button>
+              {peers.length > 0 && (
+                <ul className="ws-peerlist">
+                  {peers.map((p) => (
+                    <li key={p.peer}>
+                      <button
+                        className={peer === p.peer ? "on" : ""}
+                        onClick={() => pickPeer(p)}
+                      >
+                        <span className="ws-peer-name">{p.name}</span>
+                        <span className="ws-peer-meta">
+                          {p.count} 条 · {when(p.lastMs)}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
               <p className="ws-hint">
-                只读 wechat-decrypt 解出来的库，不碰解密本身。没填对象不会启动。
+                只读 wechat-decrypt 解出来的库，不碰解密本身。选一个人，再点开始。
               </p>
             </div>
           ) : (
@@ -532,26 +619,14 @@ export default function Workspace() {
             </label>
             <div className="ws-profile">
               <span className="ws-kicker">对方是谁</span>
-              <div className="ws-row">
-                <input
-                  value={age}
-                  onChange={(e) => setAge(e.target.value)}
-                  placeholder="年龄"
-                />
-                <input
-                  value={role}
-                  onChange={(e) => setRole(e.target.value)}
-                  placeholder="身份 / 职业"
-                />
-              </div>
-              <input
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder="脾气、习惯、说话方式"
-              />
-              <p className="ws-hint">
-                聊天记录看不出来的东西填这里，写出来的句子才会像在跟这个具体的人说话。
-              </p>
+              <button
+                className="ghost"
+                disabled={!peer}
+                onClick={() => setProfileOpen(true)}
+              >
+                {[age && `${age} 岁`, role, note].filter(Boolean).join("，") ||
+                  (peer ? "还没填，点这里补" : "先选一个人")}
+              </button>
             </div>
             <div className="ws-modes">
               <button className={mode === "baseline" ? "on" : ""} onClick={() => setMode("baseline")}>
@@ -596,6 +671,44 @@ export default function Workspace() {
           {report && <ReportView report={report} />}
         </main>
       </div>
+
+      {profileOpen && (
+        <div className="ws-overlay" onClick={() => setProfileOpen(false)}>
+          <div className="ws-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>对方是谁</h3>
+            <p className="ws-hint" style={{ marginBottom: 14 }}>
+              聊天记录里读不出来的，只能你补。填了写出来的句子才像在跟这个人说话。
+            </p>
+            <div className="ws-form">
+              <div className="ws-row">
+                <input
+                  value={age}
+                  onChange={(e) => setAge(e.target.value)}
+                  placeholder="年龄"
+                />
+                <input
+                  value={role}
+                  onChange={(e) => setRole(e.target.value)}
+                  placeholder="身份 / 职业"
+                />
+              </div>
+              <input
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="脾气、习惯、说话方式"
+              />
+              <div className="ws-form-actions">
+                <button className="primary" onClick={() => void saveProfile()}>
+                  保存
+                </button>
+                <button className="ghost" onClick={() => setProfileOpen(false)}>
+                  先跳过
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {modelOpen && (
         <div className="ws-overlay" onClick={() => setModelOpen(false)}>

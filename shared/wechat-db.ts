@@ -122,6 +122,73 @@ function loadPeerNames(dbDir: string, m?: WeChatMapping["peerNames"]): Map<strin
   return out;
 }
 
+/** 会话列表里的一行。够人认出是谁、值不值得点。 */
+export type PeerSummary = {
+  /** 原始会话标识（单聊是 wxid，群聊是 xxx@chatroom），拿它当稳定的 key。 */
+  peer: string;
+  /** 昵称或备注，只用来显示。 */
+  name: string;
+  count: number;
+  lastMs: number;
+};
+
+/**
+ * 只列会话，不读内容。左栏的列表用它，避免为了看有哪些人而把几十万条消息搬进内存。
+ * 用 SQL 做聚合，一条 query 出结果。
+ */
+export function listWeChatPeers(config: {
+  dbDir: string;
+  mapping: WeChatMapping;
+}): PeerSummary[] {
+  const { messages: m } = config.mapping;
+  const unit = config.mapping.timeUnit ?? "auto";
+  const names = loadPeerNames(config.dbDir, config.mapping.peerNames);
+  const files = dbFiles(config.dbDir, m.db);
+  if (files.length === 0) {
+    throw new Error(
+      `找不到消息库：${resolve(config.dbDir, m.db)}。先跑 decrypt_db.py 解出 decrypted/ 目录。`,
+    );
+  }
+
+  const byPeer = new Map<string, { count: number; lastMs: number }>();
+  for (const file of files) {
+    let db: DatabaseSync | undefined;
+    try {
+      db = new DatabaseSync(file, { readOnly: true });
+      const cols = m.columns;
+      const rows = db
+        .prepare(
+          `SELECT ${ident(cols.peer)} AS peer, COUNT(*) AS c, ` +
+            `MAX(CAST(${ident(cols.time)} AS INTEGER)) AS t ` +
+            `FROM ${ident(m.table)} GROUP BY ${ident(cols.peer)}`,
+        )
+        .all() as Array<{ peer: unknown; c: unknown; t: unknown }>;
+      for (const r of rows) {
+        if (r.peer == null) continue;
+        const raw = String(r.peer);
+        const ms = toMillis(r.t, unit) ?? 0;
+        const prev = byPeer.get(raw);
+        byPeer.set(raw, {
+          count: (prev?.count ?? 0) + Number(r.c ?? 0),
+          lastMs: Math.max(prev?.lastMs ?? 0, ms),
+        });
+      }
+    } finally {
+      db?.close();
+    }
+  }
+
+  return [...byPeer]
+    .map(([raw, v]) => ({
+      peer: raw,
+      name: names.get(raw) ?? raw,
+      count: v.count,
+      lastMs: v.lastMs,
+    }))
+    .filter((p) => p.count > 0)
+    .sort((a, b) => b.lastMs - a.lastMs);
+}
+
 /**
  * 读一个或多个消息库，按会话聚合。只返回 allowlist 里的会话，且只保留 sinceMs 之后
  * 有动静的。allowlist 同时匹配昵称和原始 id，方便你按哪个都能登记。
@@ -199,7 +266,7 @@ export function readWeChatSessions(config: WeChatReadConfig): NormalizedSession[
     bucket.items.sort((a, b) => a.ms - b.ms);
     const kept = bucket.items.slice(-config.maxMessagesPerPeer).map((i) => i.msg);
     if (kept.length === 0) continue;
-    out.push({ peer: bucket.name, messages: kept });
+    out.push({ peer: bucket.name, peerId: raw, messages: kept });
   }
   return out;
 }

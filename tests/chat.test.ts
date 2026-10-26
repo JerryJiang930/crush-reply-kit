@@ -327,3 +327,23 @@ test("判断摘要进提示词", () => {
   assert.match(prompt.user, /本地判断模型对这段对话的评分/);
   assert.match(prompt.user, /好感度 25/);
 });
+
+// 更早的部分压成摘要放在原文前面；没有摘要时不能凭空出现这一段。
+test("更早的摘要进提示词，且排在原文前", () => {
+  const o = { action: "continue", stage: "dating" } as never;
+  const withSum = buildDraftPrompt(
+    o,
+    "对方：今天还是加班",
+    "continue",
+    {},
+    undefined,
+    "上周聊过换工作的事，她提过想休息一阵。",
+  );
+  const iSum = withSum.user.indexOf("更早聊过的");
+  const iRecent = withSum.user.indexOf("对话最近内容");
+  assert.ok(iSum >= 0, "摘要段应当存在");
+  assert.ok(iSum < iRecent, "摘要要排在最近对话之前");
+
+  const none = buildDraftPrompt(o, "对方：今天还是加班", "continue");
+  assert.doesNotMatch(none.user, /更早聊过的/);
+});

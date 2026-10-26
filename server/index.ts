@@ -12,6 +12,7 @@ import {
 } from "./model-config";
 import { settingsRouter } from "./settings-api";
 import { chatSettingsRouter } from "./chat-settings-api";
+import { peersRouter } from "./peers-api";
 import { runPipelineApi, pipelineRequestSchema } from "./pipeline-api";
 import { ProviderError, providerErrorMessage } from "./provider";
 const app = express();
@@ -44,6 +45,7 @@ app.use("/api", (req, res, next) => {
 });
 app.use("/api/settings", settingsRouter);
 app.use("/api/chat-settings", chatSettingsRouter);
+app.use("/api/peers", peersRouter);
 app.get("/api/health", (_req, res) => {
   const s = publicSettings();
   res.json({

@@ -35,7 +35,10 @@ export type Candidate = {
  * candidates 是从判断里分出来的几个回复方向。
  */
 export type SessionReport = {
+  /** 显示名。 */
   peer: string;
+  /** 稳定 id（wxid）。存游标、存设定都用它，昵称会变。 */
+  peerId: string;
   relation: Relation;
   overview: Overview | null;
   /** 逐句判断，按 messages 的顺序用 id 索引。 */

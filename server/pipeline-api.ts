@@ -19,6 +19,7 @@ import { runPipeline } from "./pipeline";
 import { activeConfig } from "./model-config";
 import { ConfigurationError } from "./provider-config";
 import { resolveChatConfig } from "./chat-config";
+import { readPeerState, summaryStore, writePeerState } from "./peer-state";
 import {
   createManualSource,
   createWeChatSource,
@@ -107,39 +108,6 @@ function buildAdapter(req: PipelineRequest): SourceAdapter {
   });
 }
 
-function peerStateFile(peer: string): string {
-  const safe = peer.replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 120) || "unknown";
-  return join(peersDir, `${safe}.json`);
-}
-
-type PeerState = { peer: string; lastMs: number; count: number; at: string };
-
-function readPeerState(peer: string): PeerState | null {
-  try {
-    const f = peerStateFile(peer);
-    if (!existsSync(f)) return null;
-    return JSON.parse(readFileSync(f, "utf8")) as PeerState;
-  } catch {
-    return null;
-  }
-}
-
-function writePeerState(peer: string, lastMs: number, count: number): void {
-  try {
-    mkdirSync(peersDir, { recursive: true });
-    writeFileSync(
-      peerStateFile(peer),
-      JSON.stringify({
-        peer,
-        lastMs,
-        count,
-        at: new Date().toISOString(),
-      } satisfies PeerState),
-    );
-  } catch {
-    /* 基线游标只是优化，写不出也不影响本次分析 */
-  }
-}
 
 /** 库里的时间可能是秒也可能是毫秒，统一成毫秒再比大小。 */
 function toMs(timestamp: unknown): number {
@@ -179,6 +147,7 @@ export async function runPipelineApi(
     profile: req.profile,
     lineWindow: req.lineWindow,
     draftContext: req.draftContext ?? (Number(process.env.DRAFT_CONTEXT) || 30),
+    peerSummary: summaryStore,
     messageWindow: req.messageWindow,
     sinceMs,
     candidates: 3,
@@ -188,9 +157,14 @@ export async function runPipelineApi(
 
   // 推进 WeChat 基线游标：取每个报告里最晚一条消息的时间。
   for (const r of reports) {
-    if (req.source.kind !== "wechat" || !r.peer) continue;
+    if (req.source.kind !== "wechat" || !r.peerId) continue;
     const lastMs = r.messages.reduce((max, m) => Math.max(max, toMs(m.timestamp)), 0);
-    if (lastMs > 0) writePeerState(r.peer, lastMs, r.messages.length);
+    if (lastMs > 0)
+      writePeerState(r.peerId, {
+        lastMs,
+        count: r.messages.length,
+        name: r.peer,
+      });
   }
 
   if (signal?.aborted) throw new DOMException("Aborted", "AbortError");

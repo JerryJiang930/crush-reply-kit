@@ -13,8 +13,10 @@ import type { Message } from "./types";
 import { readWeChatSessions, type WeChatMapping } from "./wechat-db";
 
 export type NormalizedSession = {
-  /** Stable peer identifier (WeChat nickname / room id). */
+  /** 显示名（昵称 / 备注）。会变，不要拿它当 key。 */
   peer: string;
+  /** 稳定 id（wxid / room id）。有就用它存游标，改备注不影响。 */
+  peerId?: string;
   messages: Message[];
 };
 

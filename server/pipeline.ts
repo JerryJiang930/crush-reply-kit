@@ -20,6 +20,7 @@ import { analyze } from "./analysis";
 import { incrementalJobs, overviewJob } from "../shared/incremental";
 import type { ActiveConfig } from "./model-config";
 import { draftCandidates, judgmentSignals, type Candidate } from "./candidates";
+import { summarizeOlder } from "./summarize";
 import type { ChatConfig } from "./chat-config";
 import type { LineResult, Relation } from "../shared/types";
 import type { SessionReport } from "../shared/pipeline-types";
@@ -46,6 +47,11 @@ export type PipelineConfig = {
   messageWindow?: number;
   /** 起草时给模型看多少条历史。太短就只能在原地打转。 */
   draftContext?: number;
+  /** 更早部分的摘要存在哪，按 peer 取。不传就不做摘要。 */
+  peerSummary?: (peer: string) => {
+    read(): string | null;
+    write(text: string, upToId: string): void;
+  };
   /** How many reply directions to draft. */
   candidates?: number;
   /** Called when a draft fails; defaults to a stderr warning. */
@@ -91,6 +97,7 @@ export async function runPipeline(
     if (!messages.length) {
       reports.push({
         peer: session.peer,
+        peerId: session.peerId ?? session.peer,
         relation,
         overview: null,
         lines: [],
@@ -136,10 +143,36 @@ export async function runPipeline(
         : messages.length;
     const visibleMessages = messages.slice(-displayWindow);
 
+    // 超出起草窗口的那部分先压成摘要：模型自己不会总结，塞超了只会被从前面截断。
+    const contextLines = cfg.draftContext ?? 30;
+    let earlier: string | undefined;
+    if (
+      cfg.draft &&
+      cfg.peerSummary &&
+      visibleMessages.length > contextLines + 10
+    ) {
+      const older = visibleMessages.slice(0, -contextLines);
+      try {
+        const store = cfg.peerSummary(session.peer);
+        const text = await summarizeOlder(older, cfg.draft, store.read());
+        if (text) {
+          earlier = text;
+          store.write(text, older.at(-1)?.id ?? "");
+        }
+      } catch (err) {
+        (cfg.onDraftError ?? defaultDraftError)(
+          session.peer,
+          "summary",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+
     const candidates = overview
       ? await draftCandidates(overview, {
           chat: cfg.draft,
-          recent: lastMessages(visibleMessages, cfg.draftContext ?? 30),
+          recent: lastMessages(visibleMessages, contextLines),
+          earlier,
           count: cfg.candidates,
           profile: cfg.profile,
           signals: judgmentSignals(overview, [...lines.values()], visibleMessages),
@@ -150,6 +183,7 @@ export async function runPipeline(
 
     reports.push({
       peer: session.peer,
+      peerId: session.peerId ?? session.peer,
       relation,
       overview,
       lines: [...lines.values()],
