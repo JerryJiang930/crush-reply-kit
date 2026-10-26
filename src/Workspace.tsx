@@ -535,6 +535,12 @@ export default function Workspace() {
       let source: unknown;
       if (tab === "wechat") {
         if (!peer) throw new Error("先在左边选一个人。");
+        // 明文快照是死的，不先解一遍，新消息永远进不来。
+        setNotice("正在同步微信记录，十几秒…");
+        const synced = await fetch("/api/peers/sync", { method: "POST" });
+        const syncData = await synced.json();
+        if (!synced.ok) throw new Error(syncData.message || "同步微信记录失败。");
+        setNotice("");
         source = { kind: "wechat", dbDir, peer };
       } else {
         const parsed = parseChat(raw);

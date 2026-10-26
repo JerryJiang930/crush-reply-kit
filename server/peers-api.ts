@@ -10,6 +10,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { listWeChatPeers } from "../shared/wechat-db";
 import { listKnownPeers, readPeerState, writePeerState } from "./peer-state";
+import { syncWeChat } from "./wechat-sync";
 
 export const peersRouter = Router();
 
@@ -80,6 +81,12 @@ peersRouter.get("/", (req, res) => {
       .status(400)
       .json({ error: e instanceof Error ? e.message : "读不出会话列表。" });
   }
+});
+
+/** 分析之前先把加密库解一遍，让快照跟上微信里的新消息。 */
+peersRouter.post("/sync", async (_req, res) => {
+  const result = await syncWeChat();
+  res.status(result.ok ? 200 : 500).json(result);
 });
 
 /** 没有库目录时也能用：已经建过基线的人。 */
