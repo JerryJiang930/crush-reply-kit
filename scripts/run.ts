@@ -11,12 +11,13 @@
 // WECHAT_DECRYPT_URL to enable it — requires you to run 328336690/wechat-decrypt
 // yourself with admin rights, and to set ALLOWED_PEERS to the peers you may
 // process. Do not run it against peers who have not consented.
-import { runPipeline, type DraftConfig } from "../server/pipeline";
+import { runPipeline } from "../server/pipeline";
 import {
   createManualSource,
   createWeChatDecryptSource,
 } from "../shared/sources";
 import type { LocalConfig } from "../server/model-config";
+import { describeChatConfig, resolveChatConfig } from "../server/chat-config";
 
 function env(key: string, fallback = ""): string {
   return (process.env[key] ?? fallback).trim();
@@ -38,14 +39,7 @@ const deliverConfig = { mode: (env("DELIVER_MODE", "print") === "clipboard" ? "c
 const sourceKind = env("SOURCE", "manual");
 const allowedPeers = env("ALLOWED_PEERS").split(",").map((s) => s.trim()).filter(Boolean);
 
-const draft: DraftConfig | undefined =
-  env("DRAFT_ENDPOINT") && env("DRAFT_MODEL")
-    ? {
-        endpoint: env("DRAFT_ENDPOINT"),
-        model: env("DRAFT_MODEL"),
-        apiKey: env("DRAFT_API_KEY", "local"),
-      }
-    : undefined;
+const draft = resolveChatConfig();
 
 async function main() {
   const source =
@@ -69,17 +63,22 @@ async function main() {
   }
 
   const sinceMs = env("SINCE_MS") ? Number(env("SINCE_MS")) : 0;
+  if (draft) console.log(describeChatConfig(draft));
+  else console.log("[chat] 未配置聊天模型，OUT 将给出结构化建议（策略 + 理由）");
+
   const results = await runPipeline({
     source,
     decisionConfig,
     deliverConfig,
     sinceMs,
-    draft,
+    draft: draft ?? undefined,
     relation: (env("RELATION", "crush") as "crush" | "new" | "couple") ?? "crush",
   });
 
   for (const r of results) {
-    console.log(`\n=== ${r.peer} === action=${r.action} delivered=${r.delivered}`);
+    console.log(`\n=== ${r.peer} === action=${r.action} drafted=${r.drafted} delivered=${r.delivered}`);
+    console.log(`策略：${r.strategy}`);
+    console.log(r.text);
   }
   console.log(`\n[replysmith] 处理完成：${results.length} 个会话`);
 }

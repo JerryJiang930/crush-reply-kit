@@ -14,6 +14,8 @@ import { analyze } from "./analysis";
 import { overviewJob } from "../shared/incremental";
 import type { ActiveConfig } from "./model-config";
 import { deliver, type DeliverConfig } from "./deliver";
+import { chatComplete } from "./chat-client";
+import type { ChatConfig } from "./chat-config";
 import {
   ACTIONS,
   STAGES,
@@ -23,12 +25,9 @@ import {
 } from "../shared/types";
 import type { SourceAdapter } from "../shared/sources";
 
-export type DraftConfig = {
-  /** OpenAI-compatible /chat/completions base URL, e.g. http://127.0.0.1:11434/v1 */
-  endpoint: string;
-  model: string;
-  apiKey: string;
-};
+export type { ChatConfig };
+/** Kept for callers written before the chat client existed. */
+export type DraftConfig = ChatConfig;
 
 export type PipelineConfig = {
   source: SourceAdapter;
@@ -37,7 +36,7 @@ export type PipelineConfig = {
   /** Epoch ms; only sessions with activity after this are processed. */
   sinceMs?: number;
   /** Optional chat model that turns the chosen action into a full reply. */
-  draft?: DraftConfig;
+  draft?: ChatConfig;
   /** Relation used by the analyzer; mirrors crush-monitor's relation enum. */
   relation?: "crush" | "new" | "couple";
 };
@@ -47,6 +46,10 @@ export type PipelineResult = {
   action: string;
   /** The text handed to deliver() (clipboard or print). */
   text: string;
+  /** Human-readable strategy line, kept out of `text` so a paste stays clean. */
+  strategy: string;
+  /** True when `text` is an actual draft from a chat model. */
+  drafted: boolean;
   delivered: boolean;
 };
 
@@ -66,50 +69,49 @@ export function describeSuggestion(peer: string, overview: Overview): string {
   return lines.join("\n");
 }
 
+/** Copywriting prompt. Deliberately narrow: one line out, no commentary. */
+export const DRAFT_SYSTEM_PROMPT =
+  "你是微信聊天的回复代笔。根据对话和给定的策略，写一句自然、简短、像真人随手打出的回复。" +
+  "要求：一到两句话，不超过 40 字；不用书面语，不列点，不加引号，不解释为什么这么回。" +
+  "只输出这句话本身。 /no_think";
+
+export function buildDraftPrompt(
+  overview: Overview,
+  recent: string,
+): { system: string; user: string } {
+  const action = ACTIONS[overview.action] ?? ACTIONS.insufficient;
+  return {
+    system: DRAFT_SYSTEM_PROMPT,
+    user:
+      `对话最近内容：\n${recent}\n\n` +
+      `关系阶段：${STAGES[overview.stage] ?? STAGES.unknown}\n` +
+      `本次策略：${action.label} —— ${action.detail}\n\n` +
+      `写一句符合这个策略的回复。`,
+  };
+}
+
 /**
  * Optional: ask a local chat model for the actual sentence to send, given the
  * chat and the recommended action. Never throws — on any failure we fall back
  * to the structured recommendation so the pipeline still produces output.
  */
 async function generateDraft(
-  peer: string,
   overview: Overview,
   recent: string,
-  draft: DraftConfig,
+  draft: ChatConfig,
   fetchImpl: typeof fetch = fetch,
 ): Promise<string | null> {
-  const action = ACTIONS[overview.action] ?? ACTIONS.insufficient;
-  const system =
-    "你是微信聊天里的回复助手。根据对话和给出的策略，写一句自然、简短、像真人会发的回复。" +
-    "不要解释、不要列点、不要加引号，只输出那一句话。";
-  const user =
-    `对话最近内容：\n${recent}\n\n` +
-    `分析建议的策略是「${action.label}」：${action.detail}\n` +
-    `请写出一句符合该策略的回复。`;
+  const { system, user } = buildDraftPrompt(overview, recent);
   try {
-    const res = await fetchImpl(`${draft.endpoint.replace(/\/+$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${draft.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: draft.model,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user },
-        ],
-        temperature: 0.7,
-        max_tokens: 120,
-      }),
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const text = data.choices?.[0]?.message?.content?.trim();
-    return text || null;
+    const result = await chatComplete(
+      draft,
+      [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      fetchImpl,
+    );
+    return result.text || null;
   } catch {
     return null;
   }
@@ -138,22 +140,25 @@ export async function runPipeline(
         peer: session.peer,
         action: "insufficient",
         text: `【replysmith】对方：${session.peer}\n分析未返回结果，请稍后重试。`,
+        strategy: "分析未返回结果",
+        drafted: false,
         delivered: false,
       });
       continue;
     }
 
+    const action = ACTIONS[overview.action] ?? ACTIONS.insufficient;
+    const strategy = `${action.label} —— ${action.detail}`;
     let text = describeSuggestion(session.peer, overview);
+    let drafted = false;
+
     if (cfg.draft) {
-      const draft = await generateDraft(
-        session.peer,
-        overview,
-        lastMessages(session),
-        cfg.draft,
-      );
+      const draft = await generateDraft(overview, lastMessages(session), cfg.draft);
       if (draft) {
-        const action = ACTIONS[overview.action] ?? ACTIONS.insufficient;
-        text = `${draft}\n\n（策略：${action.label} — ${action.detail}）`;
+        // Keep the paste clean: the sentence only. The strategy travels beside
+        // it in `strategy` so the terminal (or UI) can show it separately.
+        text = draft;
+        drafted = true;
       }
     }
 
@@ -162,6 +167,8 @@ export async function runPipeline(
       peer: session.peer,
       action: overview.action,
       text,
+      strategy,
+      drafted,
       delivered,
     });
   }

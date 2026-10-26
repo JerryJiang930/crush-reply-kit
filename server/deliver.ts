@@ -27,7 +27,11 @@ export class DeliverError extends Error {
 export async function copyToClipboard(text: string): Promise<boolean> {
   if (!text) return false;
   if (process.platform === "win32") {
-    await runClip(["clip"], text);
+    // clip.exe decodes stdin using the console code page. A Chinese Windows
+    // defaults to 936 (GBK), so piping UTF-8 turns 「好，那你先忙」 into
+    // 「濂斤紝...」. Switching the child console to 65001 first lets the bytes
+    // through unchanged.
+    await runClip(["cmd", "/d", "/s", "/c", "chcp 65001>nul & clip"], text);
     return true;
   }
   if (process.platform === "darwin") {
@@ -53,15 +57,13 @@ function runClip(args: string[], text: string): Promise<void> {
 }
 
 /**
- * Deliver according to config. In "print" mode nothing leaves the process —
- * this is what tests and CI use.
+ * Deliver according to config. In "print" mode nothing leaves the process and
+ * nothing is written either — presenting the text is the caller's job (the CLI
+ * prints it, tests assert on it). That keeps this module free of console side
+ * effects so a caller can't end up printing the same suggestion twice.
  */
 export async function deliver(text: string, config: DeliverConfig): Promise<{ delivered: boolean }> {
-  if (config.mode === "print") {
-    // eslint-disable-next-line no-console
-    console.log("[replysmith] suggestion:\n" + text);
-    return { delivered: false };
-  }
+  if (config.mode === "print") return { delivered: false };
   const delivered = await copyToClipboard(text);
   if (!delivered) throw new DeliverError("剪贴板写入失败 / clipboard write failed");
   return { delivered };
