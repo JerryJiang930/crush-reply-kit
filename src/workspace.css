@@ -550,3 +550,11 @@
   margin-left: auto;
   font-size: 12px;
 }
+
+/* 同步提示：比普通说明更值得看，给一点边距和分隔 */
+.ws-sync {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px dashed var(--line, #ece3e7);
+  line-height: 1.6;
+}

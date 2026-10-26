@@ -724,6 +724,11 @@ export default function Workspace() {
                 ? "读完整历史，第一次接一个人用这个。"
                 : "只读上次之后的新消息，接着之前的判断往下走。"}
             </p>
+            <p className="ws-hint ws-sync">
+              电脑端只存这台机器上收发过的记录。先在手机微信里
+              「设置 → 聊天 → 聊天记录迁移与备份 → 迁移到电脑」同步一次，
+              手机上一直在用，那边的记录才连续。
+            </p>
             <button className="primary" disabled={busy} onClick={() => void run()}>
               {busy ? "判断中…" : "开始"}
             </button>
