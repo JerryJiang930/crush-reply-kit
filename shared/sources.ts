@@ -10,7 +10,7 @@
 // enforce `allowedPeers`; an empty allowlist is for local dev only.
 import { readFile } from "node:fs/promises";
 import type { Message } from "./types";
-import { readWeChatSessions, type WeChatMapping } from "./wechat-db";
+import { readWeChatSessions } from "./wechat-db";
 
 export type NormalizedSession = {
   /** 显示名（昵称 / 备注）。会变，不要拿它当 key。 */
@@ -53,51 +53,25 @@ export function createManualSource(config: ManualSourceConfig): SourceAdapter {
 
 export type WeChatSourceConfig = {
   kind: "wechat";
-  /**
-   * 328336690/wechat-decrypt 解出来的 decrypted/ 目录。解密本身是外部工具做的事
-   * （需要管理员权限读微信进程内存），本仓库不碰 SQLCipher，只读它的输出。
-   */
+  /** wechat-decrypt 输出的 decrypted/ 目录。 */
   dbDir: string;
-  /**
-   * 表名/列名的映射文件。微信 4.0 的表结构没有稳定文档，所以不写死——先用
-   * scripts/inspect-wechat-db.ts 对着真实库探测，把结果填进映射文件。
-   */
-  mappingFile: string;
   allowedPeers: string[];
-  /** 每个会话最多带多少条进上下文，默认 80 */
   maxMessagesPerPeer?: number;
 };
 
 /**
- * 读 wechat-decrypt 解密后的本地库。需要你本人在场、微信 4.0 运行中、以管理员权限
- * 先跑完 find_all_keys.py + decrypt_db.py；本适配器不触发任何解密动作。
+ * 读解密后的本地库。需要你本人在场、微信 4.x 登录中，先跑解密拿到 decrypted/；
+ * 本适配器不触发任何解密动作，也不碰 SQLCipher。
  */
 export function createWeChatSource(config: WeChatSourceConfig): SourceAdapter {
   return {
     id: "wechat",
     async pull(sinceMs: number): Promise<NormalizedSession[]> {
-      let mapping: WeChatMapping;
-      try {
-        mapping = JSON.parse(await readFile(config.mappingFile, "utf8")) as WeChatMapping;
-      } catch (err) {
-        throw new Error(
-          `读不到映射文件 ${config.mappingFile}：` +
-            (err instanceof Error ? err.message : String(err)) +
-            "。先跑 npx tsx scripts/inspect-wechat-db.ts --dir=<decrypted 目录> --write",
-        );
-      }
-      if (!mapping?.messages?.table || !mapping.messages.columns?.text) {
-        throw new Error(
-          `映射文件 ${config.mappingFile} 缺 messages.table / messages.columns，` +
-            "用 inspect-wechat-db.ts 重新生成再填。",
-        );
-      }
       return readWeChatSessions({
         dbDir: config.dbDir,
-        mapping,
         allowedPeers: config.allowedPeers,
         sinceMs,
-        maxMessagesPerPeer: config.maxMessagesPerPeer ?? 80,
+        maxMessagesPerPeer: config.maxMessagesPerPeer ?? 200,
       });
     },
   };

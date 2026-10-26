@@ -93,8 +93,7 @@ export async function runOnce(): Promise<SessionReport[]> {
     ? createWeChatSource({
         kind: "wechat",
         dbDir: env("WECHAT_DB_DIR", ""),
-        mappingFile: env("WECHAT_MAPPING", ".runtime/wechat-mapping.json"),
-        allowedPeers,
+          allowedPeers,
       })
     : createManualSource({
         kind: "manual",

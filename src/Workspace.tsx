@@ -49,7 +49,7 @@ type PeerRow = {
   name: string;
   count: number;
   lastMs: number;
-  profile?: { age?: string; role?: string; note?: string };
+  profile?: { age?: string; role?: string; note?: string; relationNote?: string };
 };
 
 const LS = "replysmith.workspace";
@@ -389,6 +389,8 @@ export default function Workspace() {
   const [age, setAge] = useState(saved.age ?? "");
   const [role, setRole] = useState(saved.role ?? "");
   const [note, setNote] = useState(saved.note ?? "");
+  const [relationNote, setRelationNote] = useState(saved.relationNote ?? "");
+  const [sourceOpen, setSourceOpen] = useState(false);
   const [relation, setRelation] = useState<Relation>("crush");
   const [mode, setMode] = useState<"baseline" | "update">("baseline");
   const [busy, setBusy] = useState(false);
@@ -404,9 +406,17 @@ export default function Workspace() {
   useEffect(() => {
     localStorage.setItem(
       LS,
-      JSON.stringify({ dbDir, mappingFile, peer, selfName, age, role, note }),
+      JSON.stringify({
+        dbDir,
+        peer,
+        selfName,
+        age,
+        role,
+        note,
+        relationNote,
+      }),
     );
-  }, [dbDir, mappingFile, peer, selfName, age, role, note]);
+  }, [dbDir, peer, selfName, age, role, note, relationNote]);
 
   const loadPeers = useCallback(async () => {
     setPeersBusy(true);
@@ -445,6 +455,7 @@ export default function Workspace() {
     setAge(p.profile?.age ?? "");
     setRole(p.profile?.role ?? "");
     setNote(p.profile?.note ?? "");
+    setRelationNote(p.profile?.relationNote ?? "");
     // 第一次点这个人就问一句「对方是谁」——这些聊天记录里读不出来。
     if (!p.profile) setProfileOpen(true);
   }
@@ -454,11 +465,13 @@ export default function Workspace() {
       await fetch("/api/peers/profile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ peer, age, role, note }),
+        body: JSON.stringify({ peer, age, role, note, relationNote }),
       });
       setPeers((old) =>
         old.map((p) =>
-          p.peer === peer ? { ...p, profile: { age, role, note } } : p,
+          p.peer === peer
+            ? { ...p, profile: { age, role, note, relationNote } }
+            : p,
         ),
       );
     } catch {
@@ -496,9 +509,8 @@ export default function Workspace() {
     try {
       let source: unknown;
       if (tab === "wechat") {
-        if (!dbDir || !mappingFile || !peer)
-          throw new Error("微信库需要填目录、映射文件和分析对象。");
-        source = { kind: "wechat", dbDir, mappingFile, peer };
+        if (!peer) throw new Error("先在左边选一个人。");
+        source = { kind: "wechat", dbDir, peer };
       } else {
         const parsed = parseChat(raw);
         const names = [...new Set(parsed.messages.map((m) => m.speaker))];
@@ -511,7 +523,7 @@ export default function Workspace() {
         source,
         relation,
         mode,
-        profile: { age, role, note },
+        profile: { age, role, note, relationNote },
         lineWindow: 12,
         messageWindow: 0,
       });
@@ -555,49 +567,55 @@ export default function Workspace() {
 
           {tab === "wechat" ? (
             <div className="ws-form">
-              <label>
-                <span>解密目录</span>
-                <input
-                  value={dbDir}
-                  onChange={(e) => setDbDir(e.target.value)}
-                  placeholder="…\wechat-decrypt\decrypted"
-                />
-              </label>
-              <label>
-                <span>映射文件</span>
-                <input
-                  value={mappingFile}
-                  onChange={(e) => setMappingFile(e.target.value)}
-                  placeholder="…\decrypted\wechat-mapping.json"
-                />
-              </label>
-              <button
-                className="ghost"
-                disabled={peersBusy || !dbDir || !mappingFile}
-                onClick={() => void loadPeers()}
-              >
-                {peersBusy ? "读取中…" : peers.length ? "刷新会话" : "读取会话"}
-              </button>
-              {peers.length > 0 && (
-                <ul className="ws-peerlist">
-                  {peers.map((p) => (
-                    <li key={p.peer}>
-                      <button
-                        className={peer === p.peer ? "on" : ""}
-                        onClick={() => pickPeer(p)}
-                      >
-                        <span className="ws-peer-name">{p.name}</span>
-                        <span className="ws-peer-meta">
-                          {p.count} 条 · {when(p.lastMs)}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+              {peers.length > 0 && !sourceOpen ? (
+                <>
+                  <div className="ws-source">
+                    <span>
+                      已连上微信数据 · {peers.length} 个会话
+                    </span>
+                    <button className="link" onClick={() => setSourceOpen(true)}>
+                      换一个
+                    </button>
+                  </div>
+                  <ul className="ws-peerlist">
+                    {peers.map((p) => (
+                      <li key={p.peer}>
+                        <button
+                          className={peer === p.peer ? "on" : ""}
+                          onClick={() => pickPeer(p)}
+                        >
+                          <span className="ws-peer-name">{p.name}</span>
+                          <span className="ws-peer-meta">{when(p.lastMs)}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : (
+                <>
+                  <label>
+                    <span>数据位置</span>
+                    <input
+                      value={dbDir}
+                      onChange={(e) => setDbDir(e.target.value)}
+                      placeholder="留空，自己找"
+                    />
+                  </label>
+                  <button
+                    className="ghost"
+                    disabled={peersBusy}
+                    onClick={() => {
+                      setSourceOpen(false);
+                      void loadPeers();
+                    }}
+                  >
+                    {peersBusy ? "读取中…" : "连接"}
+                  </button>
+                  <p className="ws-hint">
+                    一般不用填。它会去找最近解出来的那份数据。
+                  </p>
+                </>
               )}
-              <p className="ws-hint">
-                只读 wechat-decrypt 解出来的库，不碰解密本身。选一个人，再点开始。
-              </p>
             </div>
           ) : (
             <div className="ws-form">
@@ -620,13 +638,33 @@ export default function Workspace() {
           <div className="ws-form">
             <label>
               <span>关系</span>
-              <select value={relation} onChange={(e) => setRelation(e.target.value as Relation)}>
+              <select
+                value={relationNote.trim() ? "other" : relation}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === "other") {
+                    setRelationNote(relationNote || " ");
+                    setRelation("new"); // 三个枚举里 new 的基准最中性
+                  } else {
+                    setRelation(v as Relation);
+                    setRelationNote("");
+                  }
+                }}
+              >
                 {Object.entries(RELATIONS).map(([k, v]) => (
                   <option key={k} value={k}>
                     {v}
                   </option>
                 ))}
+                <option value="other">其他（自己写）</option>
               </select>
+              {relationNote.trim() && (
+                <input
+                  value={relationNote.trim()}
+                  onChange={(e) => setRelationNote(e.target.value)}
+                  placeholder="比如：认识一段时间的朋友，不暧昧"
+                />
+              )}
             </label>
             <div className="ws-profile">
               <span className="ws-kicker">对方是谁</span>
@@ -707,6 +745,11 @@ export default function Workspace() {
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
                 placeholder="脾气、习惯、说话方式"
+              />
+              <input
+                value={relationNote}
+                onChange={(e) => setRelationNote(e.target.value)}
+                placeholder="你们什么关系：比如认识一段时间的朋友，不暧昧"
               />
               <div className="ws-form-actions">
                 <button className="primary" onClick={() => void saveProfile()}>

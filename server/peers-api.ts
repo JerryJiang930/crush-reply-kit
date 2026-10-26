@@ -3,14 +3,12 @@
 // 列表从解密库里按会话聚合出来，用 wxid 当 key、昵称当显示名——改备注不该
 // 让一个人变成两个人。设定跟在列表一起返回，前端点到谁就知道要不要弹框问。
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Router } from "express";
 import { z } from "zod";
 import { listWeChatPeers } from "../shared/wechat-db";
-import type { WeChatMapping } from "../shared/wechat-db";
 import { listKnownPeers, readPeerState, writePeerState } from "./peer-state";
 
 export const peersRouter = Router();
@@ -20,23 +18,36 @@ export const peersRouter = Router();
  * 换机器或换账号时目录名会变，所以按"最近还在写"挑一个，不写死。
  */
 function locateDbDir(): string | null {
-  const roots = [
-    join(homedir(), "xwechat_files"),
-    "D:/xwechat_files",
-    "C:/xwechat_files",
-  ];
+  const roots: string[] = [];
+  // 解密产物放进项目里，路径固定，用户不用记也不用填。
+  roots.push(resolve(dirname(fileURLToPath(import.meta.url)), "..", ".runtime", "wechat"));
+  for (const base of [homedir(), "D:/", "C:/"]) {
+    if (!existsSync(base)) continue;
+    for (const entry of readdirSync(base)) {
+      if (/wechat.*decrypt|wcdb/i.test(entry)) roots.push(join(base, entry));
+    }
+  }
+
+  // 只认真正解出来的库：有 session/session.db 且消息目录里有 .db。
   const candidates: { dir: string; at: number }[] = [];
   for (const root of roots) {
-    if (!existsSync(root)) continue;
-    for (const entry of readdirSync(root)) {
-      const dir = join(root, entry, "db_storage");
-      if (!existsSync(dir)) continue;
-      let at = 0;
-      for (const sub of ["message", "session", "contact"]) {
-        const probe = join(dir, sub);
-        if (existsSync(probe)) at = Math.max(at, statSync(probe).mtimeMs);
+    const stack = [root];
+    for (let depth = 0; stack.length && depth < 4; depth++) {
+      const next: string[] = [];
+      for (const dir of stack) {
+        if (existsSync(join(dir, "session/session.db"))) {
+          candidates.push({ dir, at: statSync(join(dir, "session/session.db")).mtimeMs });
+        }
+        try {
+          for (const sub of readdirSync(dir, { withFileTypes: true }))
+            if (sub.isDirectory() && !sub.name.startsWith("."))
+              next.push(join(dir, sub.name));
+        } catch {
+          /* 没权限就跳过 */
+        }
       }
-      candidates.push({ dir, at });
+      stack.length = 0;
+      stack.push(...next);
     }
   }
   candidates.sort((a, b) => b.at - a.at);
@@ -51,31 +62,19 @@ export const mappingPath = resolve(
   "wechat-mapping.json",
 );
 
-peersRouter.get("/", async (req, res) => {
+peersRouter.get("/", (req, res) => {
   // 不带参数就自己找：把这个目录甩给用户去翻是不合理的。
   const dbDir = String(req.query.dbDir ?? "").trim() || locateDbDir();
-  const mappingFile =
-    String(req.query.mappingFile ?? "").trim() ||
-    (existsSync(mappingPath) ? mappingPath : "");
   if (!dbDir) {
     res.status(404).json({ error: "没找到微信数据目录。" });
     return;
   }
-  if (!mappingFile) {
-    res.json({ peers: [], dbDir, mappingFile: "", needMapping: true });
-    return;
-  }
   try {
-    const mapping = JSON.parse(await readFile(mappingFile, "utf8")) as WeChatMapping;
-    if (!mapping?.messages?.table || !mapping.messages.columns?.peer) {
-      res.status(400).json({ error: "映射文件缺 messages.table / columns.peer。" });
-      return;
-    }
-    const peers = listWeChatPeers({ dbDir, mapping }).map((p) => {
+    const peers = listWeChatPeers({ dbDir }).map((p) => {
       const profile = readPeerState(p.peer)?.profile;
       return profile ? { ...p, profile } : p;
     });
-    res.json({ peers, dbDir, mappingFile });
+    res.json({ peers, dbDir });
   } catch (e) {
     res
       .status(400)
@@ -95,6 +94,7 @@ const profileSchema = z
     age: z.string().trim().max(20).optional(),
     role: z.string().trim().max(120).optional(),
     note: z.string().trim().max(400).optional(),
+    relationNote: z.string().trim().max(400).optional(),
   })
   .strict();
 
@@ -104,13 +104,14 @@ peersRouter.post("/profile", (req, res) => {
     res.status(400).json({ error: "设定格式不正确。" });
     return;
   }
-  const { peer, name, age, role, note } = parsed.data;
+  const { peer, name, age, role, note, relationNote } = parsed.data;
   writePeerState(peer, {
     ...(name ? { name } : {}),
     profile: {
       ...(age ? { age } : {}),
       ...(role ? { role } : {}),
       ...(note ? { note } : {}),
+      ...(relationNote ? { relationNote } : {}),
     },
   });
   res.json({ ok: true, peer });

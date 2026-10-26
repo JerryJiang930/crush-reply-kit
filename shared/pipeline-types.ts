@@ -16,6 +16,8 @@ export type Profile = {
   age?: string;
   role?: string;
   note?: string;
+  /** 你们是什么关系。三个选项装不下的时候写这里，判断和起草都看得到。 */
+  relationNote?: string;
 };
 
 /** 一条回复方向。text 为 null 时表示「这个方向先不发」（wait / respect）。 */

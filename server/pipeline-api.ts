@@ -46,7 +46,6 @@ const sourceSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("wechat"),
     dbDir: z.string().max(600),
-    mappingFile: z.string().max(600),
     peer: z.string().max(200),
   }),
 ]);
@@ -103,7 +102,6 @@ function buildAdapter(req: PipelineRequest): SourceAdapter {
   return createWeChatSource({
     kind: "wechat",
     dbDir: s.dbDir,
-    mappingFile: s.mappingFile,
     allowedPeers: [s.peer],
   });
 }

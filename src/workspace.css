@@ -528,3 +528,20 @@
   background: #fff;
   color: inherit;
 }
+
+/* 数据源已连接的一行摘要，把路径藏起来 */
+.ws-source {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: #3d4142;
+  background: #eef4f1;
+  border: 1px solid #d5e3dc;
+  border-radius: 7px;
+  padding: 7px 10px;
+}
+.ws-source .link {
+  margin-left: auto;
+  font-size: 12px;
+}

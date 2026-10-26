@@ -115,12 +115,16 @@ export const DRAFT_SYSTEM_PROMPT =
 /** 把人写进提示词。缺哪项就不提哪项，不编。 */
 function profileBlock(profile?: Profile): string {
   if (!profile) return "";
+  const lines: string[] = [];
   const bits = [
     profile.age ? `${profile.age} 岁` : "",
     profile.role ?? "",
     profile.note ?? "",
   ].filter(Boolean);
-  return bits.length ? `对方是谁：${bits.join("，")}\n` : "";
+  if (bits.length) lines.push(`对方是谁：${bits.join("，")}`);
+  if (profile.relationNote?.trim())
+    lines.push(`你们的关系：${profile.relationNote.trim()}`);
+  return lines.length ? `${lines.join("\n")}\n` : "";
 }
 
 /**

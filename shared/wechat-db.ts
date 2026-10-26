@@ -1,130 +1,30 @@
-// 读 wechat-decrypt 解密出来的 SQLite，归一化成 crush-monitor 认识的 Message[]。
+// 读 wechat-decrypt 解出来的 4.1 库。
 //
-// 边界：解密不在这里做。328336690/wechat-decrypt 负责从微信进程内存取密钥、解出
-// decrypted/ 目录；我们只读它的输出。这样仓库里没有一行触及 SQLCipher。
+// 4.1 的结构和 4.0 完全不同，别拿 4.0 的经验套：
+//   - 没有一张"所有消息"的大表。每个会话一张 `Msg_<md5(username)>`，散在
+//     message/message_0..3.db 里。
+//   - 会话本身在 session/session.db 的 SessionTable，带 sort_timestamp 和 summary。
+//   - 消息的发送者是编号，要拿 real_sender_id 回 Name2Id 换成 wxid。
+//   - 时间是秒。
 //
-// 为什么不写死表名和列名：微信 4.0 的表结构没有稳定文档，不同版本列名会变（
-// PROJECT.md §7 一直标着"表结构待验证"）。所以这里所有表名/列名都从映射文件来，
-// 映射文件由 scripts/inspect-wechat-db.ts 对着真实库探测后生成。猜错时应当报错，
-// 而不是安静地读出零条或错位的数据。
-import { existsSync, readdirSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+// 所以本文件不再靠外部映射文件猜列名：列名是固定的，写死反而看得清。真要变了，
+// 这里会直接抛错，而不是安静读出零条。
+import { existsSync, readdirSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type { Message } from "./types";
 import type { NormalizedSession } from "./sources";
 
-export type WeChatMapping = {
-  messages: {
-    /** decrypted/ 下的相对路径；给目录则读其中所有 *.db（消息库常分片） */
-    db: string;
-    table: string;
-    columns: {
-      id: string;
-      /** 时间列。秒或毫秒都行，由 timeUnit 决定 */
-      time: string;
-      /** 是否我发的 */
-      isSelf: string;
-      /** 会话标识：单聊是对方 wxid，群聊是 xxx@chatroom */
-      peer: string;
-      text: string;
-    };
-    /** 哪些值表示"我发的"，默认 [1, "1", true] */
-    selfValues?: Array<string | number | boolean>;
-  };
-  /** 可选：把 wxid 换成昵称（contact 库） */
-  peerNames?: {
-    db: string;
-    table: string;
-    columns: { id: string; name: string };
-  };
-  /** 时间列单位，默认 auto（按数值大小判断秒/毫秒） */
-  timeUnit?: "auto" | "s" | "ms";
-};
-
-export type WeChatReadConfig = {
-  /** wechat-decrypt 的 decrypted/ 目录 */
+export type WeChatConfig = {
+  /** wechat-decrypt 输出的 decrypted/ 目录。 */
   dbDir: string;
-  mapping: WeChatMapping;
-  allowedPeers: string[];
-  sinceMs: number;
-  /** 每个会话最多取最近多少条，防止把整库塞进上下文 */
-  maxMessagesPerPeer: number;
+  /** 自己的 wxid。不给就从目录名推（wxid_xxx_b16e → wxid_xxx）。 */
+  selfId?: string;
 };
 
-const SAFE = /^[A-Za-z0-9_]+$/;
-
-/** 表名/列名来自配置文件，拼进 SQL 前必须挡住引号，否则就是注入点。 */
-function ident(name: string): string {
-  if (!SAFE.test(name)) {
-    throw new Error(`映射里的标识符不合法：${JSON.stringify(name)}（只允许字母数字下划线）`);
-  }
-  return `"${name}"`;
-}
-
-function dbFiles(dbDir: string, rel: string): string[] {
-  const abs = resolve(dbDir, rel);
-  if (!existsSync(abs)) return [];
-  if (statSync(abs).isDirectory()) {
-    return readdirSync(abs)
-      .filter((f) => f.toLowerCase().endsWith(".db"))
-      .map((f) => join(abs, f));
-  }
-  return [abs];
-}
-
-function isTrueish(value: unknown, extra: Array<string | number | boolean>): boolean {
-  if (value === null || value === undefined) return false;
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value !== 0;
-  const s = String(value).trim().toLowerCase();
-  return s === "1" || s === "true" || extra.some((v) => String(v).toLowerCase() === s);
-}
-
-/** 微信时间列可能是秒也可能是毫秒，auto 时按量级判断（1e11 秒已是公元 5138 年）。 */
-function toMillis(value: unknown, unit: "auto" | "s" | "ms"): number | null {
-  const n = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  if (unit === "s") return Math.round(n * 1000);
-  if (unit === "ms") return Math.round(n);
-  return n > 1e11 ? Math.round(n) : Math.round(n * 1000);
-}
-
-/** 非文本消息（图片/表情/链接卡片）在 4.0 里是 XML，塞给模型只会污染判断。 */
-function looksLikeNonText(text: string): boolean {
-  const t = text.trimStart();
-  return t.startsWith("<") && (t.includes("<msg") || t.includes("</msg>"));
-}
-
-type PeerName = { raw: string; name: string };
-
-function loadPeerNames(dbDir: string, m?: WeChatMapping["peerNames"]): Map<string, string> {
-  const out = new Map<string, string>();
-  if (!m) return out;
-  for (const file of dbFiles(dbDir, m.db)) {
-    let db: DatabaseSync | undefined;
-    try {
-      db = new DatabaseSync(file, { readOnly: true });
-      const rows = db
-        .prepare(
-          `SELECT ${ident(m.columns.id)} AS id, ${ident(m.columns.name)} AS name FROM ${ident(m.table)}`,
-        )
-        .all() as Array<{ id: unknown; name: unknown }>;
-      for (const r of rows) {
-        if (r.id == null || r.name == null) continue;
-        out.set(String(r.id), String(r.name));
-      }
-    } catch {
-      /* 昵称只是锦上添花，读不到就退回原始 id */
-    } finally {
-      db?.close();
-    }
-  }
-  return out;
-}
-
-/** 会话列表里的一行。够人认出是谁、值不值得点。 */
 export type PeerSummary = {
-  /** 原始会话标识（单聊是 wxid，群聊是 xxx@chatroom），拿它当稳定的 key。 */
+  /** 稳定 key：对方的 wxid 或 xxx@chatroom。 */
   peer: string;
   /** 昵称或备注，只用来显示。 */
   name: string;
@@ -132,141 +32,208 @@ export type PeerSummary = {
   lastMs: number;
 };
 
-/**
- * 只列会话，不读内容。左栏的列表用它，避免为了看有哪些人而把几十万条消息搬进内存。
- * 用 SQL 做聚合，一条 query 出结果。
- */
-export function listWeChatPeers(config: {
-  dbDir: string;
-  mapping: WeChatMapping;
-}): PeerSummary[] {
-  const { messages: m } = config.mapping;
-  const unit = config.mapping.timeUnit ?? "auto";
-  const names = loadPeerNames(config.dbDir, config.mapping.peerNames);
-  const files = dbFiles(config.dbDir, m.db);
-  if (files.length === 0) {
-    throw new Error(
-      `找不到消息库：${resolve(config.dbDir, m.db)}。先跑 decrypt_db.py 解出 decrypted/ 目录。`,
-    );
-  }
+const TEXT = 1;
 
-  const byPeer = new Map<string, { count: number; lastMs: number }>();
-  for (const file of files) {
-    let db: DatabaseSync | undefined;
-    try {
-      db = new DatabaseSync(file, { readOnly: true });
-      const cols = m.columns;
-      const rows = db
-        .prepare(
-          `SELECT ${ident(cols.peer)} AS peer, COUNT(*) AS c, ` +
-            `MAX(CAST(${ident(cols.time)} AS INTEGER)) AS t ` +
-            `FROM ${ident(m.table)} GROUP BY ${ident(cols.peer)}`,
-        )
-        .all() as Array<{ peer: unknown; c: unknown; t: unknown }>;
-      for (const r of rows) {
-        if (r.peer == null) continue;
-        const raw = String(r.peer);
-        const ms = toMillis(r.t, unit) ?? 0;
-        const prev = byPeer.get(raw);
-        byPeer.set(raw, {
-          count: (prev?.count ?? 0) + Number(r.c ?? 0),
-          lastMs: Math.max(prev?.lastMs ?? 0, ms),
-        });
-      }
-    } finally {
-      db?.close();
+function open(file: string): DatabaseSync {
+  return new DatabaseSync(file, { readOnly: true });
+}
+
+function tableIn(dbFile: string, table: string): boolean {
+  const db = open(dbFile);
+  try {
+    return !!db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
+      .get(table);
+  } finally {
+    db.close();
+  }
+}
+
+/** 微信把会话名取 md5 当表名，这是连接两者的唯一桥。 */
+export function msgTable(username: string): string {
+  return `Msg_${createHash("md5").update(username).digest("hex")}`;
+}
+
+function messageDbs(dbDir: string): string[] {
+  const dir = resolve(dbDir, "message");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((f) => /^message_\d+\.db$/i.test(f))
+    .map((f) => join(dir, f));
+}
+
+/** 目录名带设备后缀：wxid_eussprfzf12f22_b16e → wxid_eussprfzf12f22。 */
+function guessSelf(dbDir: string): string {
+  const m = basename(resolve(dbDir, "..")).match(/^(wxid_[a-z0-9]+)_[a-z0-9]+$/i);
+  return m ? m[1] : "";
+}
+
+type NameRow = { rowid: number; user_name: string };
+
+/** 每个消息库各有一份 Name2Id，编号只在库内有效，不能跨库混用。 */
+function nameMap(dbFile: string): Map<number, string> {
+  const out = new Map<number, string>();
+  const db = open(dbFile);
+  try {
+    for (const r of db.prepare("SELECT rowid, user_name FROM Name2Id").all() as NameRow[])
+      out.set(Number(r.rowid), String(r.user_name ?? ""));
+  } finally {
+    db.close();
+  }
+  return out;
+}
+
+/** 备注优先，其次昵称，再次微信号，都没有就用 wxid。 */
+function displayNames(dbDir: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const file = resolve(dbDir, "contact/contact.db");
+  if (!existsSync(file)) return out;
+  const db = open(file);
+  try {
+    const rows = db
+      .prepare(
+        "SELECT username, remark, nick_name, alias FROM contact WHERE username IS NOT NULL",
+      )
+      .all() as Array<{
+      username: string;
+      remark: string | null;
+      nick_name: string | null;
+      alias: string | null;
+    }>;
+    for (const r of rows) {
+      const name = [r.remark, r.nick_name, r.alias].find((v) => v && String(v).trim());
+      if (name) out.set(String(r.username), String(name));
     }
+  } catch {
+    /* 备注只是显示，读不到就退回 wxid */
+  } finally {
+    db.close();
   }
-
-  return [...byPeer]
-    .map(([raw, v]) => ({
-      peer: raw,
-      name: names.get(raw) ?? raw,
-      count: v.count,
-      lastMs: v.lastMs,
-    }))
-    .filter((p) => p.count > 0)
-    .sort((a, b) => b.lastMs - a.lastMs);
+  return out;
 }
 
 /**
- * 读一个或多个消息库，按会话聚合。只返回 allowlist 里的会话，且只保留 sinceMs 之后
- * 有动静的。allowlist 同时匹配昵称和原始 id，方便你按哪个都能登记。
+ * 列会话。用 SessionTable 的 sort_timestamp 排序，不逐表 count：三百多个会话
+ * 数一遍要好几秒，而"最近有没有动静"才是列表要回答的问题。
  */
-export function readWeChatSessions(config: WeChatReadConfig): NormalizedSession[] {
-  const { messages: m } = config.mapping;
-  const unit = config.mapping.timeUnit ?? "auto";
-  const selfValues = m.selfValues ?? [1, "1", true];
-  const names = loadPeerNames(config.dbDir, config.mapping.peerNames);
-
-  const files = dbFiles(config.dbDir, m.db);
-  if (files.length === 0) {
-    throw new Error(
-      `找不到消息库：${resolve(config.dbDir, m.db)}。先跑 decrypt_db.py 解出 decrypted/ 目录。`,
-    );
+export function listWeChatPeers(cfg: WeChatConfig): PeerSummary[] {
+  const file = resolve(cfg.dbDir, "session/session.db");
+  if (!existsSync(file)) {
+    throw new Error(`找不到 ${file}。确认指到的是 decrypted/ 目录。`);
   }
-
-  type Row = { id: unknown; time: unknown; isSelf: unknown; peer: unknown; text: unknown };
-  const byPeer = new Map<string, { name: string; items: Array<{ ms: number; msg: Message }> }>();
-
-  for (const file of files) {
-    let db: DatabaseSync | undefined;
-    try {
-      db = new DatabaseSync(file, { readOnly: true });
-      const cols = m.columns;
-      const sql =
-        `SELECT ${ident(cols.id)} AS id, ${ident(cols.time)} AS time, ` +
-        `${ident(cols.isSelf)} AS isSelf, ${ident(cols.peer)} AS peer, ` +
-        `${ident(cols.text)} AS text FROM ${ident(m.table)} ` +
-        `WHERE CAST(${ident(cols.time)} AS INTEGER) >= ?`;
-      // 秒/毫秒两种可能都试一遍：先把阈值按毫秒降成秒，取两者中较小的那个更安全。
-      const thresholdMs = config.sinceMs;
-      const threshold = unit === "s" ? Math.floor(thresholdMs / 1000) : thresholdMs;
-      let rows: Row[] = [];
-      try {
-        rows = db.prepare(sql).all(threshold) as Row[];
-      } catch {
-        // 该列不是数值型时退回全表扫，再在 JS 里过滤。
-        rows = db
-          .prepare(
-            `SELECT ${ident(cols.id)} AS id, ${ident(cols.time)} AS time, ` +
-              `${ident(cols.isSelf)} AS isSelf, ${ident(cols.peer)} AS peer, ` +
-              `${ident(cols.text)} AS text FROM ${ident(m.table)}`,
-          )
-          .all() as Row[];
-      }
-
-      for (const r of rows) {
-        const ms = toMillis(r.time, unit);
-        if (ms === null || ms < config.sinceMs) continue;
-        if (r.peer == null) continue;
-        const raw = String(r.peer);
-        const name = names.get(raw) ?? raw;
-        const text = r.text == null ? "" : String(r.text);
-        const msg: Message = {
-          id: r.id == null ? `${raw}:${ms}` : String(r.id),
-          sender: isTrueish(r.isSelf, selfValues) ? "self" : "other",
-          text: looksLikeNonText(text) ? "" : text,
-          timestamp: String(Math.floor(ms / 1000)),
-          kind: looksLikeNonText(text) || text.trim() === "" ? "unreadable" : "text",
+  const names = displayNames(cfg.dbDir);
+  const db = open(file);
+  try {
+    const rows = db
+      .prepare(
+        "SELECT username, sort_timestamp, last_timestamp FROM SessionTable WHERE username IS NOT NULL",
+      )
+      .all() as Array<{
+      username: string;
+      sort_timestamp: number | null;
+      last_timestamp: number | null;
+    }>;
+    return rows
+      .map((r) => {
+        const user = String(r.username);
+        const ts = Number(r.last_timestamp || r.sort_timestamp || 0);
+        return {
+          peer: user,
+          name: names.get(user) ?? user,
+          count: 0,
+          lastMs: ts > 0 ? ts * 1000 : 0,
         };
-        const bucket = byPeer.get(raw) ?? { name, items: [] };
-        bucket.items.push({ ms, msg });
-        byPeer.set(raw, bucket);
-      }
-    } finally {
-      db?.close();
-    }
+      })
+      // 只留真人和群。公众号、服务号占位、系统号一直在推送，会把列表冲垮。
+      .filter((p) => p.peer && (p.peer.startsWith("wxid_") || p.peer.endsWith("@chatroom") || p.peer === "filehelper"))
+      .sort((a, b) => b.lastMs - a.lastMs);
+  } finally {
+    db.close();
   }
+}
 
-  const allow = new Set(config.allowedPeers.map((p) => p.trim()).filter(Boolean));
+/** 一张 Msg 表在哪个消息库里。表散在 message_0..3，得挨个问。 */
+function findTable(dbDir: string, table: string): string | null {
+  for (const file of messageDbs(dbDir)) {
+    if (tableIn(file, table)) return file;
+  }
+  return null;
+}
+
+type MsgRow = {
+  local_id: number;
+  real_sender_id: number;
+  create_time: number;
+  local_type: number;
+  message_content: string | null;
+};
+
+/** 非文本消息在 4.x 里是 XML，塞给模型只会污染判断。 */
+function looksLikeXml(text: string): boolean {
+  const t = text.trimStart();
+  return t.startsWith("<") && t.includes("<msg");
+}
+
+/**
+ * 读一个会话。只返回 allowlist 内的，空白名单一律拒绝——这条是伦理红线，
+ * 不靠调用方自觉。
+ */
+export function readWeChatSessions(
+  cfg: WeChatConfig & {
+    allowedPeers: string[];
+    sinceMs?: number;
+    maxMessagesPerPeer?: number;
+  },
+): NormalizedSession[] {
+  const allow = new Set(cfg.allowedPeers.map((p) => p.trim()).filter(Boolean));
+  if (allow.size === 0) throw new Error("必须指定要读的会话。空白名单不启动。");
+
+  const self = cfg.selfId || guessSelf(cfg.dbDir);
+  const since = cfg.sinceMs ?? 0;
+  const limit = cfg.maxMessagesPerPeer ?? 200;
+  const names = displayNames(cfg.dbDir);
   const out: NormalizedSession[] = [];
-  for (const [raw, bucket] of byPeer) {
-    if (allow.size > 0 && !allow.has(raw) && !allow.has(bucket.name)) continue;
-    bucket.items.sort((a, b) => a.ms - b.ms);
-    const kept = bucket.items.slice(-config.maxMessagesPerPeer).map((i) => i.msg);
-    if (kept.length === 0) continue;
-    out.push({ peer: bucket.name, peerId: raw, messages: kept });
+
+  for (const peer of allow) {
+    const table = msgTable(peer);
+    const file = findTable(cfg.dbDir, table);
+    if (!file) continue;
+
+    const db = open(file);
+    let rows: MsgRow[] = [];
+    try {
+      rows = db
+        .prepare(
+          `SELECT local_id, real_sender_id, create_time, local_type, message_content ` +
+            `FROM "${table}" WHERE create_time >= ? ORDER BY create_time DESC LIMIT ?`,
+        )
+        .all(Math.floor(since / 1000), limit) as MsgRow[];
+    } finally {
+      db.close();
+    }
+    if (!rows.length) continue;
+
+    const senders = nameMap(file);
+    const messages: Message[] = rows
+      .reverse()
+      .map((r) => {
+        const from = senders.get(Number(r.real_sender_id)) ?? "";
+        const text = r.message_content == null ? "" : String(r.message_content);
+        const readable = Number(r.local_type) === TEXT && !!text.trim() && !looksLikeXml(text);
+        return {
+          id: `${peer}:${r.local_id}`,
+          sender: self && from === self ? ("self" as const) : ("other" as const),
+          text: readable ? text : "",
+          timestamp: String(Math.floor(Number(r.create_time))),
+          kind: readable ? ("text" as const) : ("unreadable" as const),
+        };
+      });
+
+    out.push({
+      peer: names.get(peer) ?? peer,
+      peerId: peer,
+      messages,
+    });
   }
   return out;
 }
