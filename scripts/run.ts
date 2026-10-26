@@ -2,49 +2,82 @@
 //
 //   npx tsx scripts/run.ts
 //
-// Everything is driven by environment variables so nothing is hardcoded. Defaults
-// point at the local Laya decision service and a sample session file, and the
-// deliver step defaults to "print" so nothing touches your clipboard unless you
-// opt in. To actually copy to clipboard, set DELIVER_MODE=clipboard.
+// Everything is driven by environment variables so nothing is hardcoded. The
+// default source is a sample JSON file, the default decision engine is a local
+// service on 8421, and the default deliver mode is "print" so nothing touches
+// your clipboard unless you opt in with DELIVER_MODE=clipboard.
 //
 // Real WeChat ingestion is OFF by default. Set SOURCE=wechat plus WECHAT_DB_DIR
 // (the decrypted/ directory produced by 328336690/wechat-decrypt) and
-// ALLOWED_PEERS to enable it. You must run that tool yourself with admin rights:
+// ALLOWED_PEERS to enable it. That tool must be run by you, with admin rights:
 // it extracts keys from the running WeChat process and decrypts the SQLCipher
-// databases. This repo only reads its output. Do not run it against peers who
-// have not consented.
+// databases. This repo only reads its output, and only for peers who consented.
 //
-// The pipeline itself is exported as runOnce() so scripts/up.ts can boot the
-// local services and then call it in-process, the same way upstream's start.ts
-// simply imports server/index and lets it run.
+// The pipeline is exported as runOnce() so scripts/up.ts can boot the local
+// services and then call it in-process, the same way upstream's start.ts simply
+// imports server/index and lets it run.
+import { createInterface } from "node:readline/promises";
 import { pathToFileURL } from "node:url";
-import { runPipeline, type PipelineResult } from "../server/pipeline";
+import { runPipeline, type SessionReport } from "../server/pipeline";
 import { createManualSource, createWeChatSource } from "../shared/sources";
 import type { LocalConfig } from "../server/model-config";
 import { describeChatConfig, resolveChatConfig } from "../server/chat-config";
+import { copyToClipboard } from "../server/deliver";
+import { renderCandidates, renderReport } from "../server/report";
 
 function env(key: string, fallback = ""): string {
   return (process.env[key] ?? fallback).trim();
 }
 
-/** One full IN -> THINK -> OUT pass. Returns the per-session results. */
-export async function runOnce(): Promise<PipelineResult[]> {
-  const decisionConfig: LocalConfig = {
+const DIALECTS = ["systemone", "laya", "anyjev"] as const;
+type Dialect = (typeof DIALECTS)[number];
+
+function decisionConfig(): LocalConfig {
+  const raw = env("LOCAL_DIALECT", "systemone") as Dialect;
+  const dialect = DIALECTS.includes(raw) ? raw : "systemone";
+  // LOCAL_PORT drives both the launcher and this default, so changing the port
+  // in one place cannot leave the request pointing at the old one.
+  const port = env("LOCAL_PORT", "8421");
+  return {
     engine: "local",
-    provider: env("LOCAL_PROVIDER", "laya"),
-    name: "Local decision engine",
-    endpoint: env("LOCAL_ENDPOINT", "http://127.0.0.1:8421"),
+    provider: "local",
+    name: "本地判断服务",
+    endpoint: env("LOCAL_ENDPOINT") || `http://127.0.0.1:${port}`,
     model: env("LOCAL_MODEL", "convaiinnovations/laya-multilingual"),
     apiKey: env("LOCAL_API_KEY", "local"),
     protocol: "local",
-    dialect: "systemone",
+    dialect,
   };
+}
 
-  const deliverConfig = {
-    mode: (env("DELIVER_MODE", "print") === "clipboard" ? "clipboard" : "print") as
-      | "clipboard"
-      | "print",
-  };
+/**
+ * Ask which candidate to copy. Returns the index, or null to skip.
+ *
+ * Non-interactive runs (pipes, CI) always take the first drafted candidate:
+ * waiting on stdin there would hang until the timeout.
+ */
+async function choose(
+  report: SessionReport,
+  ask: (question: string) => Promise<string>,
+): Promise<number | null> {
+  const usable = report.candidates
+    .map((c, i) => ({ c, i }))
+    .filter(({ c }) => c.text);
+  if (!usable.length) return null;
+  if (!process.stdin.isTTY) return usable[0].i;
+
+  const hint = usable.map(({ c, i }) => `${i + 1}）${c.label}`).join("　");
+  const answer = (await ask(`复制哪一条？${hint}　回车=1，s=跳过：`)).trim().toLowerCase();
+  if (answer === "s" || answer === "skip") return null;
+  if (!answer) return usable[0].i;
+  const n = Number(answer);
+  return usable.some(({ i }) => i === n - 1) ? n - 1 : usable[0].i;
+}
+
+/** One full IN -> THINK -> OUT pass. Returns the per-session reports. */
+export async function runOnce(): Promise<SessionReport[]> {
+  const deliverMode =
+    env("DELIVER_MODE", "print") === "clipboard" ? "clipboard" : "print";
 
   const sourceKind = env("SOURCE", "manual");
   const allowedPeers = env("ALLOWED_PEERS")
@@ -86,26 +119,49 @@ export async function runOnce(): Promise<PipelineResult[]> {
 
   const sinceMs = env("SINCE_MS") ? Number(env("SINCE_MS")) : 0;
   if (draft) console.log(describeChatConfig(draft));
-  else console.log("[chat] 未配置聊天模型，OUT 将给出结构化建议（策略 + 理由）");
+  else console.log("[chat] 没配聊天模型，只给方向和理由，不写句子");
 
-  const results = await runPipeline({
+  const reports = await runPipeline({
     source,
-    decisionConfig,
-    deliverConfig,
+    decisionConfig: decisionConfig(),
     sinceMs,
     draft: draft ?? undefined,
+    lineWindow: Number(env("LINE_WINDOW", "12")),
+    candidates: Number(env("DRAFT_CANDIDATES", "3")),
     relation: (env("RELATION", "crush") as "crush" | "new" | "couple") ?? "crush",
   });
 
-  for (const r of results) {
-    console.log(
-      `\n=== ${r.peer} === action=${r.action} drafted=${r.drafted} delivered=${r.delivered}`,
-    );
-    console.log(`策略：${r.strategy}`);
-    console.log(r.text);
+  const rl =
+    deliverMode === "clipboard" && process.stdin.isTTY
+      ? createInterface({ input: process.stdin, output: process.stdout })
+      : null;
+  try {
+    for (const report of reports) {
+      console.log(renderReport(report));
+      if (report.candidates.length) console.log(renderCandidates(report.candidates));
+      console.log("");
+
+      if (deliverMode !== "clipboard") continue;
+      const picked = await choose(
+        report,
+        rl
+          ? (q) => rl.question(q)
+          : async () => "",
+      );
+      if (picked === null) {
+        console.log(`[replysmith] ${report.peer}：跳过了，没有复制。`);
+        continue;
+      }
+      const text = report.candidates[picked].text!;
+      await copyToClipboard(text);
+      console.log(`[replysmith] ${report.peer}：第 ${picked + 1} 条已进剪贴板。`);
+    }
+  } finally {
+    rl?.close();
   }
-  console.log(`\n[replysmith] 处理完成：${results.length} 个会话`);
-  return results;
+
+  console.log(`[replysmith] 处理完成：${reports.length} 个会话`);
+  return reports;
 }
 
 // Only run when invoked directly, so importing this file (up.ts) has no effect.

@@ -5,22 +5,22 @@
 ## 三段链路
 
 ```
-IN      把聊天记录读进来          shared/sources.ts
-THINK   判断关系状态和下一步       server/analysis.ts + 本地判断模型
-OUT     写一句话，放进剪贴板       server/pipeline.ts · server/deliver.ts
+IN      把聊天记录读进来                shared/sources.ts
+THINK   判断关系走向和每句话的状态       server/analysis.ts + 本地判断模型
+OUT     给几条不同方向的回复，挑一条     server/candidates.ts · server/deliver.ts
 ```
 
 **IN** 有两个来源。一个是 JSON 文件（`examples/sample-sessions.json`，不依赖任何外部工具）；另一个是解密之后的微信数据库。
 
-**THINK** 是这个工具的主体。它把最近一段对话拆成几十道选择题和评分类题目，交给本地判断模型逐题打分：对方现在的态度、关系走到哪一步、哪些话还没接住、下一步该主动还是该等。拿到的是每道题的概率分布，不是一句笼统的“感觉还行”。
+**THINK** 是这个工具的主体，它跑两轮题。第一轮看整体：五个维度各自打分，加权成好感度，判断关系走到哪一步，决定下一步该主动还是该等，同时留下它考虑过的另一条路。第二轮看逐句：对方每句话的情绪分布和意图分布，你自己每句话的表达质量，从 SSS 到 D 分档。两轮都是概率输出。
 
-**OUT** 把判断结果拼成提示词，让聊天模型写一句回复。没配聊天模型时，OUT 退回到结构化建议，只给策略和理由，不写句子。
+**OUT** 按判断结果分几个方向各写一句。方向从主推动作、它权衡过的备选、以及退一步的动作里取，最多三条。方向和理由不依赖聊天模型，只有句子需要。
 
-## 剪贴板就是终点
+## 最后一步由你定
 
-回复生成好之后复制在剪贴板里，粘贴这个动作由你按。
+候选出来之后，终端会问复制哪一条，输入编号，那条进剪贴板，你再粘过去。按回车默认第一条，输入 `s` 跳过。
 
-自动粘贴能做（模拟键盘事件，或者直接往微信的输入框塞文本），但那样就少了一个人过目的环节。一句话的分寸要看上下文，这里的上下文不只是聊天记录。另外自动粘贴跟微信版本绑得太紧，客户端一更新就得跟着修。
+自动粘贴能做（模拟键盘事件，或者直接往微信的输入框塞文本），但那样就少了一个人过目的环节。一句话的分寸要看上下文，这里的上下文不只是聊天记录。另外几个方向摆在一起就是为了让你挑，全自动发出去等于把这一挑也省掉了。
 
 ## 开始之前
 
@@ -75,8 +75,9 @@ npm run run         # 另开一个终端再跑一次
 | `LOCAL_ENDPOINT` | `http://127.0.0.1:8421` | 判断服务的地址 |
 | `LOCAL_PORT` | `8421` | 启动器监听的端口；设了 `LOCAL_ENDPOINT` 就按后者走 |
 | `LOCAL_MODEL` | `convaiinnovations/laya-multilingual` | 模型名，服务端按这个名字路由 |
-| `LOCAL_DIALECT` | `systemone` | 协议方言：`systemone` / `laya` / `anyjev` |
+| `LOCAL_DIALECT` | `systemone` | 协议方言：`systemone` / `anyjev` |
 | `LOCAL_API_KEY` | `local` | 本机服务通常不看，但有些客户端要求非空 |
+| `LINE_WINDOW` | `12` | 逐句判断看最近多少条消息。设 `0` 只出整体判断，速度最快 |
 
 ### OUT：聊天模型
 
@@ -103,6 +104,7 @@ npm run run         # 另开一个终端再跑一次
 | `DRAFT_TIMEOUT_MS` | `60000` | |
 | `DRAFT_WIRE` | 取预设 | `openai` 或 `ollama`。Ollama 的兼容路由会忽略 `think:false`，本地跑思考模型必须走 `ollama` 这条原生路由 |
 | `CHAT_CONFIG_PATH` | `.runtime/chat.json` | 也可以用 JSON 文件代替环境变量，逐字段合并，环境变量优先 |
+| `DRAFT_CANDIDATES` | `3` | 出几个方向的候选。每多一个方向就多一次聊天模型调用 |
 
 换供应商只改 `DRAFT_PRESET`，代码不用碰。
 
@@ -172,6 +174,8 @@ npm run run
 server/
   pipeline.ts        IN → THINK → OUT 的编排，唯一知道三段都存在的地方
   analysis.ts        把对话拆成题目，再把答案拼回结论
+  candidates.ts      从判断结果分出几个方向，各写一句
+  report.ts          把完整判断排成终端报告
   contract.ts        判断结果的结构校验，答不全就算失败
   local-decision.ts  判断服务的几种协议方言
   chat-client.ts     聊天补全，两种 HTTP 形状
@@ -194,11 +198,12 @@ tests/
 
 - 只处理文本消息。图片、语音、表情包在数据库里有记录但没有可读内容，会被跳过。
 - 两个模型都得自己准备好。仓库不带权重，也不下载权重，启动器只去本地缓存里找。
-- 没有图形界面，全部走命令行。
+- 走的是命令行。仓库里还留着上游的网页界面，它读的是粘贴进来的记录，跟这条链路不共用数据，目前也没接上本地判断服务。
+- 逐句判断的质量取决于判断模型本身。Laya 是个三亿参数的小模型，情绪和意图的分布经常很平，一个十二选一的问题最高项只有二成五，这种时候别把百分比当真。
 - 关系判断是概率输出，不是事实。它读不出你们现实里发生的事。
 
 ## 出处
 
-`server/analysis.ts` 里的题目设计、评分维度和关系规则来自 [FerryCorleone/crush-monitor](https://github.com/FerryCorleone/crush-monitor)（MIT）。本仓库在它之上把判断模型换成本地服务，加了 IN 和 OUT 两段，去掉了网页层。
+`server/analysis.ts` 里的题目设计、评分维度和关系规则来自 [FerryCorleone/crush-monitor](https://github.com/FerryCorleone/crush-monitor)（MIT）。本仓库在它之上把判断模型换成本地服务，加了 IN 和 OUT 两段。
 
 MIT License。

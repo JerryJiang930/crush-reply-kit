@@ -13,7 +13,8 @@ import {
   readChatConfigFile,
   resolveChatConfig,
 } from "../server/chat-config";
-import { buildDraftPrompt, runPipeline } from "../server/pipeline";
+import { runPipeline } from "../server/pipeline";
+import { buildDraftPrompt } from "../server/candidates";
 import { startStubDecisionServer } from "../tools/stub-decision-server";
 import type { LocalConfig } from "../server/model-config";
 
@@ -141,14 +142,18 @@ test("resolveChatConfig lets env override the file per field", () => {
   }
 });
 
-test("buildDraftPrompt carries the chosen strategy", () => {
-  const p = buildDraftPrompt(
-    { action: "respect", stage: "dating" } as never,
-    "我：在吗\n对方：最近有点忙",
-  );
+test("buildDraftPrompt carries the direction it was asked for", () => {
+  const overview = { action: "respect", stage: "flirt" } as never;
+  const p = buildDraftPrompt(overview, "我：在吗\n对方：最近有点忙");
   assert.match(p.system, /只输出这句话本身/);
   assert.match(p.user, /对方：最近有点忙/);
-  assert.match(p.user, /策略/);
+  assert.match(p.user, /本轮方向：尊重边界/);
+
+  // The same conversation must produce a different instruction per direction,
+  // otherwise three candidates would be three copies of one sentence.
+  const alt = buildDraftPrompt(overview, "我：在吗\n对方：最近有点忙", "empathize");
+  assert.match(alt.user, /本轮方向：先接情绪/);
+  assert.notEqual(alt.user, p.user);
 });
 
 /** A throwaway OpenAI-compatible server that returns one fixed sentence. */
@@ -189,7 +194,10 @@ test("chatComplete parses an OpenAI-shaped response", async () => {
 });
 
 test("pipeline uses the draft text and keeps the strategy out of it", async () => {
-  const stub = await startStubDecisionServer();
+  // Force a forward-leaning action so the direction it steps back to (empathize)
+  // also speaks. With the stub's default "continue" the calm neighbour is
+  // "wait", which is silent by design and would leave only one draft.
+  const stub = await startStubDecisionServer({ choices: { action: "ask" } });
   const { server, base } = await startFakeChat("<｜end▁of▁thinking｜>那你先忙，晚点再说。");
   try {
     const decisionConfig: LocalConfig = {
@@ -218,14 +226,13 @@ test("pipeline uses the draft text and keeps the strategy out of it", async () =
         },
       },
       decisionConfig,
-      deliverConfig: { mode: "print" },
       draft: normalizeChatConfig({ baseUrl: base, model: "fake-8b" }),
     });
     assert.equal(results.length, 1);
-    assert.equal(results[0].drafted, true);
-    assert.equal(results[0].text, "那你先忙，晚点再说。");
-    assert.ok(!results[0].text.includes("策略"), "paste must stay clean");
-    assert.match(results[0].strategy, /——/);
+    const drafted = results[0].candidates.filter((c) => c.text);
+    assert.ok(drafted.length >= 2, "every direction that can speak must be drafted");
+    assert.equal(drafted[0].text, "那你先忙，晚点再说。");
+    assert.ok(!drafted[0].text!.includes("方向"), "paste must stay clean");
   } finally {
     server.close();
     await stub.close();
@@ -260,12 +267,14 @@ test("pipeline falls back to the structured suggestion when the draft model is d
         },
       },
       decisionConfig,
-      deliverConfig: { mode: "print" },
       // Port 1 is never listening.
       draft: normalizeChatConfig({ baseUrl: "http://127.0.0.1:1/v1", model: "gone", timeoutMs: 2000 }),
     });
-    assert.equal(results[0].drafted, false);
-    assert.match(results[0].text, /replysmith 建议/);
+    // Every draft failed, but the directions themselves survive: the strategy
+    // is the part worth reading, and it costs no model at all.
+    assert.ok(results[0].candidates.length >= 1);
+    assert.equal(results[0].candidates.every((c) => c.text === null), true);
+    assert.ok(results[0].candidates[0].detail.length > 0);
   } finally {
     await stub.close();
   }
