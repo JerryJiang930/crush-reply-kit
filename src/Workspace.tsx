@@ -280,6 +280,9 @@ function ReportView({ report }: { report: SessionReport }) {
       <section className="ws-lines">
         <h3>
           逐句
+          <span className="ws-muted" style={{ fontWeight: 400, marginLeft: 8 }}>
+            电脑端导出的记录，中间可能有没同步或已删除的消息，不是连续对话
+          </span>
           {report.messages.length > 12 && (
             <button className="link" onClick={() => setExpanded(!expanded)}>
               {expanded ? "只看最近" : `展开全部 ${report.messages.length} 条`}

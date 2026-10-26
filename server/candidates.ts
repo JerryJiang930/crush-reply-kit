@@ -187,7 +187,8 @@ export function buildDraftPrompt(
     system: DRAFT_SYSTEM_PROMPT,
     user:
       (earlier ? `更早聊过的（摘要）：\n${earlier}\n\n` : "") +
-      `对话最近内容：\n${recent}\n\n` +
+      `对话最近内容（从电脑端微信库导出，中间可能有没同步、已删除或跨了很久的消息，` +
+      `不是一段连续的对话，别假定前后句是接着说的）：\n${recent}\n\n` +
       (signals
         ? `本地判断模型对这段对话的评分（是概率，只当语气参考，别把数字写进回复）：\n${signals}\n\n`
         : "") +
