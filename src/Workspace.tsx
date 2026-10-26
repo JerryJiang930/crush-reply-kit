@@ -73,6 +73,17 @@ function when(ms: number): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+/**
+ * 自定义关系写完之后，判断那边仍要落回三个枚举之一。按关键词挑一个最接近的，
+ * 免得"认识一段时间的朋友"被当成 crush 去算好感度。
+ */
+function guessRelation(text: string): Relation {
+  const t = text.trim();
+  if (/在一起|对象|男友|女友|男朋友|女朋友|恋爱|老公|老婆|处着/.test(t)) return "couple";
+  if (/喜欢|暗恋|暧昧|追|心动|crush/i.test(t)) return "crush";
+  return "new";
+}
+
 async function post<T>(url: string, body: unknown, signal?: AbortSignal): Promise<T> {
   const res = await fetch(url, {
     method: "POST",
@@ -390,6 +401,9 @@ export default function Workspace() {
   const [role, setRole] = useState(saved.role ?? "");
   const [note, setNote] = useState(saved.note ?? "");
   const [relationNote, setRelationNote] = useState(saved.relationNote ?? "");
+  const [customRelation, setCustomRelation] = useState(
+    Boolean((saved.relationNote ?? "").trim()),
+  );
   const [sourceOpen, setSourceOpen] = useState(false);
   const [relation, setRelation] = useState<Relation>("crush");
   const [mode, setMode] = useState<"baseline" | "update">("baseline");
@@ -456,6 +470,7 @@ export default function Workspace() {
     setRole(p.profile?.role ?? "");
     setNote(p.profile?.note ?? "");
     setRelationNote(p.profile?.relationNote ?? "");
+    setCustomRelation(Boolean((p.profile?.relationNote ?? "").trim()));
     // 第一次点这个人就问一句「对方是谁」——这些聊天记录里读不出来。
     if (!p.profile) setProfileOpen(true);
   }
@@ -639,13 +654,14 @@ export default function Workspace() {
             <label>
               <span>关系</span>
               <select
-                value={relationNote.trim() ? "other" : relation}
+                value={customRelation ? "other" : relation}
                 onChange={(e) => {
                   const v = e.target.value;
                   if (v === "other") {
-                    setRelationNote(relationNote || " ");
-                    setRelation("new"); // 三个枚举里 new 的基准最中性
+                    setCustomRelation(true);
+                    setRelation(guessRelation(relationNote));
                   } else {
+                    setCustomRelation(false);
                     setRelation(v as Relation);
                     setRelationNote("");
                   }
@@ -658,12 +674,20 @@ export default function Workspace() {
                 ))}
                 <option value="other">其他（自己写）</option>
               </select>
-              {relationNote.trim() && (
+              {customRelation && (
                 <input
-                  value={relationNote.trim()}
-                  onChange={(e) => setRelationNote(e.target.value)}
+                  value={relationNote}
+                  onChange={(e) => {
+                    setRelationNote(e.target.value);
+                    setRelation(guessRelation(e.target.value));
+                  }}
                   placeholder="比如：认识一段时间的朋友，不暧昧"
                 />
+              )}
+              {customRelation && (
+                <p className="ws-hint">
+                  判断基准按「{RELATIONS[relation]}」，这句话原样进提示词。
+                </p>
               )}
             </label>
             <div className="ws-profile">
