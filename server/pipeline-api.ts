@@ -64,6 +64,7 @@ export const pipelineRequestSchema = z.object({
   mode: z.enum(["baseline", "update"]).default("baseline"),
   profile: profileSchema.optional(),
   lineWindow: z.number().int().min(0).max(200).default(12),
+  draftContext: z.number().int().min(4).max(200).optional(),
   messageWindow: z.number().int().min(0).max(4000).default(0),
 });
 
@@ -177,6 +178,7 @@ export async function runPipelineApi(
     relation: req.relation as Relation,
     profile: req.profile,
     lineWindow: req.lineWindow,
+    draftContext: req.draftContext ?? (Number(process.env.DRAFT_CONTEXT) || 30),
     messageWindow: req.messageWindow,
     sinceMs,
     candidates: 3,

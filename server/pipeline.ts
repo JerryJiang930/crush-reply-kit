@@ -44,6 +44,8 @@ export type PipelineConfig = {
    * judged line by line.
    */
   messageWindow?: number;
+  /** 起草时给模型看多少条历史。太短就只能在原地打转。 */
+  draftContext?: number;
   /** How many reply directions to draft. */
   candidates?: number;
   /** Called when a draft fails; defaults to a stderr warning. */
@@ -137,7 +139,7 @@ export async function runPipeline(
     const candidates = overview
       ? await draftCandidates(overview, {
           chat: cfg.draft,
-          recent: lastMessages(visibleMessages),
+          recent: lastMessages(visibleMessages, cfg.draftContext ?? 30),
           count: cfg.candidates,
           profile: cfg.profile,
           signals: judgmentSignals(overview, [...lines.values()], visibleMessages),

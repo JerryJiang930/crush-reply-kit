@@ -180,7 +180,9 @@ export function buildDraftPrompt(
     system: DRAFT_SYSTEM_PROMPT,
     user:
       `对话最近内容：\n${recent}\n\n` +
-      (signals ? `判断（概率，只当语气参考，别把数字写进回复）：\n${signals}\n\n` : "") +
+      (signals
+        ? `本地判断模型对这段对话的评分（是概率，只当语气参考，别把数字写进回复）：\n${signals}\n\n`
+        : "") +
       profileBlock(profile) +
       `关系阶段：${STAGES[overview.stage] ?? "未确定"}\n` +
       `本轮方向：${action.label} —— ${action.detail}\n\n` +

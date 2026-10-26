@@ -324,6 +324,6 @@ test("判断摘要进提示词", () => {
   assert.match(signals, /对方最近这几句的判断/);
 
   const prompt = buildDraftPrompt(overview, "对方：累死了", "continue", {}, signals);
-  assert.match(prompt.user, /判断（概率/);
+  assert.match(prompt.user, /本地判断模型对这段对话的评分/);
   assert.match(prompt.user, /好感度 25/);
 });
