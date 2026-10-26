@@ -86,7 +86,9 @@ export function planDirections(
   count = 3,
 ): { action: string; source: Candidate["source"] }[] {
   const primary = ACTIONS[overview.action] ? overview.action : "insufficient";
-  if (primary === "insufficient") return [{ action: "insufficient", source: "primary" }];
+  // 动作判断没把握时，仍然要给出能发的话：拿"顺着聊"当基准，把不确定留给标注，
+  // 而不是丢一句"再多一点上下文"把人晾在那儿。
+  if (primary === "insufficient") return buildPlan("continue", overview, count);
 
   // A stated boundary is not a menu — but only when the model actually knows.
   // Laya leans cautious: on an ordinary "周末有空吗" it scores the no-go

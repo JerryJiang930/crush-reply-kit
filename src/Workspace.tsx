@@ -110,15 +110,22 @@ function LineRow({ report, index }: { report: SessionReport; index: number }) {
           : Number(m.timestamp) || m.timestamp,
       )
     : null;
+  // 一次分析跨好几天，只给时分看不出哪句是哪天。
+  const clock = (d: Date) =>
+    `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
   const hhmm =
     time && !Number.isNaN(time.getTime())
-      ? `${String(time.getHours()).padStart(2, "0")}:${String(time.getMinutes()).padStart(2, "0")}`
-      : "--:--";
+      ? time.toDateString() === new Date().toDateString()
+        ? clock(time)
+        : `${time.getMonth() + 1}/${time.getDate()} ${clock(time)}`
+      : "";
   return (
     <li className={`ws-line ${m.sender === "self" ? "self" : ""}`}>
       <div className="ws-line-head">
         <span className="ws-time">{hhmm}</span>
-        <span className="ws-who">{m.sender === "self" ? "我" : "对方"}</span>
+        <span className="ws-who">
+          {m.senderName || (m.sender === "self" ? "我" : "对方")}
+        </span>
         <span className="ws-text">
           {m.kind === "unreadable" ? "［图片 / 语音 / 表情］" : m.text}
         </span>

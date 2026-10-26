@@ -66,7 +66,7 @@ export const pipelineRequestSchema = z.object({
   profile: profileSchema.optional(),
   lineWindow: z.number().int().min(0).max(200).default(12),
   draftContext: z.number().int().min(4).max(200).optional(),
-  messageWindow: z.number().int().min(0).max(4000).default(0),
+  messageWindow: z.number().int().min(0).max(4000).default(50),
 });
 
 export type PipelineRequest = z.infer<typeof pipelineRequestSchema>;

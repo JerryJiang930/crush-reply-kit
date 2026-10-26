@@ -4,6 +4,8 @@ export type Relation = "crush" | "new" | "couple";
 export type Message = {
   id: string;
   sender: "self" | "other";
+  /** 发送者显示名。群聊里 other 不止一个人，光靠 self/other 分不清。 */
+  senderName?: string;
   text: string;
   timestamp: string | null;
   kind: "text" | "unreadable";

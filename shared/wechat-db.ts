@@ -9,7 +9,7 @@
 //
 // 所以本文件不再靠外部映射文件猜列名：列名是固定的，写死反而看得清。真要变了，
 // 这里会直接抛错，而不是安静读出零条。
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
@@ -62,8 +62,21 @@ function messageDbs(dbDir: string): string[] {
     .map((f) => join(dir, f));
 }
 
-/** 目录名带设备后缀：wxid_eussprfzf12f22_b16e → wxid_eussprfzf12f22。 */
-function guessSelf(dbDir: string): string {
+/**
+ * 自己的 wxid。优先读 decrypted/ 旁边的 owner.json（解密时写进去的），
+ * 读不到再从目录名猜——但解密产物搬过位置就猜不出来，那时候所有消息都会被
+ * 当成对方说的，判断直接失真。
+ */
+function resolveSelf(dbDir: string): string {
+  try {
+    const f = resolve(dbDir, "..", "owner.json");
+    if (existsSync(f)) {
+      const id = (JSON.parse(readFileSync(f, "utf8")) as { selfId?: string }).selfId;
+      if (id) return id;
+    }
+  } catch {
+    /* 落到目录名推断 */
+  }
   const m = basename(resolve(dbDir, "..")).match(/^(wxid_[a-z0-9]+)_[a-z0-9]+$/i);
   return m ? m[1] : "";
 }
@@ -188,7 +201,7 @@ export function readWeChatSessions(
   const allow = new Set(cfg.allowedPeers.map((p) => p.trim()).filter(Boolean));
   if (allow.size === 0) throw new Error("必须指定要读的会话。空白名单不启动。");
 
-  const self = cfg.selfId || guessSelf(cfg.dbDir);
+  const self = cfg.selfId || resolveSelf(cfg.dbDir);
   const since = cfg.sinceMs ?? 0;
   const limit = cfg.maxMessagesPerPeer ?? 200;
   const names = displayNames(cfg.dbDir);
@@ -218,11 +231,13 @@ export function readWeChatSessions(
       .reverse()
       .map((r) => {
         const from = senders.get(Number(r.real_sender_id)) ?? "";
+        const mine = !!self && from === self;
         const text = r.message_content == null ? "" : String(r.message_content);
         const readable = Number(r.local_type) === TEXT && !!text.trim() && !looksLikeXml(text);
         return {
           id: `${peer}:${r.local_id}`,
-          sender: self && from === self ? ("self" as const) : ("other" as const),
+          sender: mine ? ("self" as const) : ("other" as const),
+          senderName: mine ? "我" : (names.get(from) ?? from),
           text: readable ? text : "",
           timestamp: String(Math.floor(Number(r.create_time))),
           kind: readable ? ("text" as const) : ("unreadable" as const),

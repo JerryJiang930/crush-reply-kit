@@ -75,12 +75,17 @@ function mergeLines(into: Map<string, LineResult>, incoming?: LineResult[]): voi
 }
 
 function lastMessages(
-  messages: { text: string; sender: string }[],
+  messages: { text: string; sender: string; senderName?: string }[],
   n = 8,
 ): string {
   return messages
+    // 图片和表情在库里是空文本，留着只会让模型以为有人没说话。
+    .filter((m) => m.text.trim())
     .slice(-n)
-    .map((m) => `${m.sender === "self" ? "我" : "对方"}：${m.text}`)
+    .map(
+      (m) =>
+        `${m.senderName || (m.sender === "self" ? "我" : "对方")}：${m.text}`,
+    )
     .join("\n");
 }
 
