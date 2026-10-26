@@ -4,7 +4,7 @@
 // Everything rendered here comes from a single SessionReport returned by
 // POST /api/pipeline. The terminal renderer (server/report.ts) draws the same
 // object; neither is the other's upstream.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ModelSettings } from "./ModelSettings";
 import { parseChat, toMessages } from "../shared/parser";
 import {
@@ -409,25 +409,36 @@ export default function Workspace() {
   }, [dbDir, mappingFile, peer, selfName, age, role, note]);
 
   const loadPeers = useCallback(async () => {
-    if (!dbDir || !mappingFile) {
-      setError("先填解密目录和映射文件。");
-      return;
-    }
     setPeersBusy(true);
     setError("");
     try {
-      const q = new URLSearchParams({ dbDir, mappingFile });
+      // 不传路径就让服务端自己找，找到再回填输入框。
+      const q = new URLSearchParams();
+      if (dbDir) q.set("dbDir", dbDir);
+      if (mappingFile) q.set("mappingFile", mappingFile);
       const res = await fetch(`/api/peers?${q}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "读不出会话列表");
+      if (data.dbDir && !dbDir) setDbDir(data.dbDir);
+      if (data.mappingFile && !mappingFile) setMappingFile(data.mappingFile);
+      if (data.needMapping) {
+        setNotice("找到了微信库，但还没有表结构映射。跑一次 npm run inspect 生成。");
+      }
       setPeers(data.peers ?? []);
-      if (!data.peers?.length) setNotice("这个库里没读到会话。");
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setPeersBusy(false);
     }
   }, [dbDir, mappingFile]);
+
+  // 打开页面先自己找一次，找得到就不用用户填任何路径。
+  const probed = useRef(false);
+  useEffect(() => {
+    if (probed.current) return;
+    probed.current = true;
+    void loadPeers();
+  }, [loadPeers]);
 
   function pickPeer(p: PeerRow) {
     setPeer(p.peer);
