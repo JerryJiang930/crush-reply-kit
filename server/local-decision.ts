@@ -165,7 +165,10 @@ export async function evaluateLocalDecision(
   // The incoming payload may not carry a model name; always let the configured
   // model win so the backend routes to the right checkpoint.
   const normRaw: Raw = { ...raw, model: raw.model || config.model };
-  const deadline = AbortSignal.timeout(60_000);
+  // 判断模型可能跑在 CPU 上（显存被起草模型占着时就会这样），60 秒会误判成网络故障。
+  const deadline = AbortSignal.timeout(
+    Number(process.env.LOCAL_TIMEOUT_MS) || 180_000,
+  );
   const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
   const url = config.endpoint.replace(/\/+$/, "") + dialect.path();
   let response: Response;

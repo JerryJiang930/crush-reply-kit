@@ -22,10 +22,11 @@ export const PROVIDERS = {
   },
   opencode: {
     name: "OpenCode Jev（限时免费）",
-    endpoint: "https://opencode.ai/inference/v1/systemone",
+    // Zen 网关，不是 /inference/。免费的 jev-1.13-free 和付费的 jev-1.13 同一个端点。
+    endpoint: "https://opencode.ai/zen/v1/systemone",
     model: "jev-1.13-free",
     keyEnv: "OPENCODE_API_KEY",
-    keyUrl: "https://opencode.ai/console/",
+    keyUrl: "https://opencode.ai/auth",
   },
 } as const;
 export type Provider = keyof typeof PROVIDERS;

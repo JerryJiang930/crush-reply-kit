@@ -55,6 +55,7 @@ const profileSchema = z
     age: z.string().trim().max(20).optional(),
     role: z.string().trim().max(120).optional(),
     note: z.string().trim().max(400).optional(),
+    relationNote: z.string().trim().max(400).optional(),
   })
   .strict();
 
