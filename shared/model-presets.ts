@@ -17,6 +17,14 @@ export const MODEL_PRESETS = [
     keyUrl: "https://bailian.console.aliyun.com/",
   },
   {
+    id: "ollama",
+    name: "Ollama · 本机（判断）",
+    protocol: "openai",
+    baseUrl: "http://127.0.0.1:11434/v1",
+    model: "qwen3:8b",
+    keyUrl: "",
+  },
+  {
     id: "zhipu",
     name: "智谱 GLM",
     protocol: "openai",

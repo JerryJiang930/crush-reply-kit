@@ -85,8 +85,9 @@ export function parseSettings(input: unknown): ModelSettings {
   const preset = MODEL_PRESETS.find((p) => p.id === s.preset);
   if (!preset || (s.preset !== "custom" && s.protocol !== preset.protocol))
     throw new ConfigurationError("服务商与接口类型不匹配。");
-  if (s.protocol === "local") {
-    // 本地判断服务不校验凭据，留空是正常状态。补一个占位符，
+  const isLocal = /^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(s.baseUrl);
+  if (s.protocol === "local" || isLocal) {
+    // 指向本机的服务不校验凭据，留空是正常状态。补一个占位符，
     // 免得落进下面那套云端 Key 的格式校验。
     s.apiKey = s.apiKey || "local";
   } else if (

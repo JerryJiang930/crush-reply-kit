@@ -48,6 +48,9 @@ export class ProviderError extends Error {
 
 export function providerErrorMessage(error: unknown): string {
   if (error instanceof ProviderError) return error.message;
+  // 真正的失败原因（DNS、证书、AbortError、JSON 形状）都在这里，别只留下"网络不可达"。
+  const e = error as { name?: string; message?: string; cause?: unknown };
+  console.error("[provider] 未归类错误:", e?.name, e?.message, e?.cause ?? "");
   return "连接超时或网络不可达，请检查网络后重试。 / Connection failed or timed out.";
 }
 
