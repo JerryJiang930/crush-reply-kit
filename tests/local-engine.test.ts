@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { analyze } from "../server/analysis";
 import { ProviderError } from "../server/provider";
 import { startStubDecisionServer, type StubGuide } from "../tools/stub-decision-server";
-import type { LocalConfig } from "../server/model-config";
+import { parseSettings, settingsConfig, type LocalConfig } from "../server/model-config";
 import type { AnalysisRequest, Message } from "../shared/types";
 import { overviewJob } from "../shared/incremental";
 
@@ -140,4 +140,33 @@ test("我方回复评级：拿不到未来消息是结构保证的", async () =>
   } finally {
     await server.close();
   }
+});
+
+// 网页保存本地模型时没有 Key 可填。这条锁住「留空能存」，同时保证云端那条
+// 校验没有被顺手放松。
+test("本地预设留空 Key 也能保存，云端仍须填 Key", () => {
+  const saved = parseSettings({
+    preset: "laya",
+    protocol: "local",
+    baseUrl: "http://127.0.0.1:8421",
+    model: "convaiinnovations/laya-multilingual",
+    apiKey: "",
+  });
+  assert.equal(saved.apiKey, "local");
+  const config = settingsConfig(saved);
+  if (!("engine" in config) || config.engine !== "local")
+    assert.fail("本地预设应当解析成本地引擎");
+  assert.equal(config.dialect, "systemone");
+
+  assert.throws(
+    () =>
+      parseSettings({
+        preset: "deepseek",
+        protocol: "openai",
+        baseUrl: "https://api.deepseek.com/v1",
+        model: "deepseek-flash",
+        apiKey: "",
+      }),
+    /API Key/,
+  );
 });

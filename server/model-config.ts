@@ -85,7 +85,11 @@ export function parseSettings(input: unknown): ModelSettings {
   const preset = MODEL_PRESETS.find((p) => p.id === s.preset);
   if (!preset || (s.preset !== "custom" && s.protocol !== preset.protocol))
     throw new ConfigurationError("服务商与接口类型不匹配。");
-  if (
+  if (s.protocol === "local") {
+    // 本地判断服务不校验凭据，留空是正常状态。补一个占位符，
+    // 免得落进下面那套云端 Key 的格式校验。
+    s.apiKey = s.apiKey || "local";
+  } else if (
     !s.apiKey ||
     /[\s\x00-\x1f\x7f"'`=]/.test(s.apiKey) ||
     /^(your[_-].*|replace[_-].*|xxx+|<.*>)$/i.test(s.apiKey)
@@ -286,7 +290,8 @@ export function submittedSettings(body: unknown): ModelSettings {
   const parsed = schema.safeParse(body);
   if (!parsed.success) throw new ConfigurationError("配置格式不正确。");
   const s = parsed.data;
-  if (!s.apiKey) {
+  // 本地服务没有 Key，换地址也不需要重填；云端服务沿用原来的规则。
+  if (!s.apiKey && s.protocol !== "local") {
     const old = activeConfig(),
       view = publicSettings();
     if (

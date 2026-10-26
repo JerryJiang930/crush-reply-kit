@@ -130,6 +130,8 @@ export function ModelSettings({
       form.protocol === "jev" ||
       form.protocol === "decisions" ||
       form.protocol === "systemone" ||
+      // 本地服务的型号写在预设里，没有可发现的模型列表。
+      form.protocol === "local" ||
       (!form.apiKey.trim() && !sameKey) ||
       !form.baseUrl
     )
@@ -177,28 +179,41 @@ export function ModelSettings({
             ))}
           </select>
         </label>
-        <div className="field">
-          <span className="field-heading">
-            <label htmlFor="model-api-key">API Key</label>{" "}
-            {preset.keyUrl && (
-              <a href={preset.keyUrl} target="_blank" rel="noreferrer">
-                去获取 ↗
-              </a>
-            )}
-          </span>
-          <input
-            id="model-api-key"
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            value={form.apiKey}
-            onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
-            placeholder={
-              sameKey ? "已保存；留空继续使用" : "粘贴这个平台的 API Key"
-            }
-            required={!sameKey}
-          />
-        </div>
+        {form.protocol !== "local" && (
+          <div className="field">
+            <span className="field-heading">
+              <label htmlFor="model-api-key">API Key</label>{" "}
+              {preset.keyUrl && (
+                <a href={preset.keyUrl} target="_blank" rel="noreferrer">
+                  去获取 ↗
+                </a>
+              )}
+            </span>
+            <input
+              id="model-api-key"
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              value={form.apiKey}
+              onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
+              placeholder={
+                sameKey ? "已保存；留空继续使用" : "粘贴这个平台的 API Key"
+              }
+              required={!sameKey}
+            />
+          </div>
+        )}
+        {form.protocol === "local" && (
+          <label className="field">
+            服务地址
+            <input
+              value={form.baseUrl}
+              onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
+              placeholder="http://127.0.0.1:8421"
+              required
+            />
+          </label>
+        )}
         {form.preset === "custom" && (
           <>
             <label className="field">
@@ -240,18 +255,20 @@ export function ModelSettings({
             <div className="field">
               <span className="field-heading">
                 <label htmlFor="model-id">选择模型</label>
-                <button
-                  type="button"
-                  className="text-button"
-                  disabled={
-                    busy === "models" ||
-                    (!form.apiKey && !sameKey) ||
-                    !form.baseUrl
-                  }
-                  onClick={() => void submit("models")}
-                >
-                  {busy === "models" ? "读取中…" : "刷新模型列表"}
-                </button>
+                {form.protocol !== "local" && (
+                  <button
+                    type="button"
+                    className="text-button"
+                    disabled={
+                      busy === "models" ||
+                      (!form.apiKey && !sameKey) ||
+                      !form.baseUrl
+                    }
+                    onClick={() => void submit("models")}
+                  >
+                    {busy === "models" ? "读取中…" : "刷新模型列表"}
+                  </button>
+                )}
               </span>
               {busy === "models" && (
                 <span className="model-list-status" role="status">
@@ -395,8 +412,9 @@ export function ModelSettings({
         </button>
       )}
       <p className="model-footnote">
-        Key
-        只保存在本机服务，不存进浏览器。检测会使用少量额度；聊天仅在分析时发给所选平台。
+        {form.protocol === "local"
+          ? "本地服务不需要 Key。检测会真跑三道测试题，几十秒没有回应就说明服务没起来。"
+          : "Key 只保存在本机服务，不存进浏览器。检测会使用少量额度；聊天仅在分析时发给所选平台。"}
       </p>
     </form>
   );

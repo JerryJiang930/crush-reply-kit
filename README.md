@@ -16,11 +16,27 @@ OUT     给几条不同方向的回复，挑一条     server/candidates.ts · s
 
 **OUT** 按判断结果分几个方向各写一句。方向从主推动作、它权衡过的备选、以及退一步的动作里取，最多三条。方向和理由不依赖聊天模型，只有句子需要。
 
-## 最后一步由你定
+## 最后一步怎么落地
 
-候选出来之后，终端会问复制哪一条，输入编号，那条进剪贴板，你再粘过去。按回车默认第一条，输入 `s` 跳过。
+命令行版本停在剪贴板。候选出来之后终端问复制哪一条，输入编号，那条进剪贴板，你再粘过去。按回车默认第一条，输入 `s` 跳过。
 
-自动粘贴能做（模拟键盘事件，或者直接往微信的输入框塞文本），但那样就少了一个人过目的环节。一句话的分寸要看上下文，这里的上下文不只是聊天记录。另外几个方向摆在一起就是为了让你挑，全自动发出去等于把这一挑也省掉了。
+要做的形态是网页里出候选，点一条、按确定，那条直接发出去，不用切回微信窗口。这件事放最后做，因为它要接管微信的输入框，跟客户端版本绑得紧，微信升级一次就得跟着改一遍。
+
+## 网页在哪
+
+网页界面留着，它是操作台。三段链路接了几段，现在的状况是这样：
+
+1. **THINK 接上了。** 网页的 `/api/analyze` 和命令行的 pipeline 调的是同一个 `evaluate()`，本地判断模型两边通用。在网页的模型设置里选「Laya · 本地判断模型」，地址默认 `http://127.0.0.1:8421`，点检测，它会真跑三道测试题。本地服务不填 API Key。
+2. **IN 还没接。** 网页读的是粘进文本框的记录，跟自动读数据库那条路不共用数据。
+3. **OUT 还没接。** 网页只出分析，不出候选句。
+
+网页这样跑起来：
+
+```bash
+npm start
+```
+
+浏览器会自己打开 `http://127.0.0.1:3178`。改前端时用 `npm run dev`，它在 5178 起一个带热更新的页面。
 
 ## 开始之前
 
@@ -164,6 +180,8 @@ npm run run
 | `npm run up` | 起服务，跑一次，收工 |
 | `npm run up:keep` | 同上，服务留着 |
 | `npm run run` | 只跑一次，假定服务已在跑 |
+| `npm start` | 起网页（3178），只做分析 |
+| `npm run dev` | 开发网页，5178 热更新 |
 | `npm run inspect -- --dir=…` | 探测微信库结构 |
 | `npm test` | 跑测试 |
 | `npm run typecheck` | 类型检查 |
@@ -173,32 +191,38 @@ npm run run
 ```
 server/
   pipeline.ts        IN → THINK → OUT 的编排，唯一知道三段都存在的地方
-  analysis.ts        把对话拆成题目，再把答案拼回结论
-  candidates.ts      从判断结果分出几个方向，各写一句
   report.ts          把完整判断排成终端报告
-  contract.ts        判断结果的结构校验，答不全就算失败
+  candidates.ts      从判断结果分出几个方向，各写一句
   local-decision.ts  判断服务的几种协议方言
   chat-client.ts     聊天补全，两种 HTTP 形状
   chat-config.ts     聊天模型配置的解析与校验
   deliver.ts         剪贴板和打印
+  index.ts           网页的 /api 路由
+  settings-api.ts    模型设置的保存与连接检测
+  analysis.ts        拆题、评分维度、关系规则（上游原版）
+  provider.ts llm.ts model-config.ts liquid.ts openai-decisions.ts  云端协议栈（上游原版）
 shared/
   sources.ts         IN 的接口与两个实现
   wechat-db.ts       读解密后的 SQLite
-  questions.ts       choice / score / noul 三种题目构造器
   chat-presets.ts    聊天模型预设
-  types.ts rules.ts affinity.ts memory.ts intents.ts labels.ts
+  rules.ts affinity.ts incremental.ts intents.ts labels.ts memory.ts ratings.ts types.ts  判断结构（上游原版）
+  parser.ts fixtures.ts model-presets.ts model-selection.ts  网页粘贴那条线用的（上游原版）
+src/                 网页界面，React + vite
 scripts/
   up.ts              一键启动
   run.ts             跑一次
+  start.ts           起网页
   inspect-wechat-db.ts  探测库结构
 tests/
 ```
+
+上面标了「上游原版」的，是从上游继承来的代码，逻辑没改过：六维好感度怎么加权、十选一动作怎么定、对方划定边界时 respect 怎么压住其他动作、好感度不够时 wait 怎么拦住推进行、逐句题目怎么出，全在这些文件里。改过的只有三个：`provider.ts` 加了一个 `engine === "local"` 的分支，`model-config.ts` 加了本地方言的类型和空 Key 处理，`model-presets.ts` 加了三个本地预设。
 
 ## 已知限制
 
 - 只处理文本消息。图片、语音、表情包在数据库里有记录但没有可读内容，会被跳过。
 - 两个模型都得自己准备好。仓库不带权重，也不下载权重，启动器只去本地缓存里找。
-- 走的是命令行。仓库里还留着上游的网页界面，它读的是粘贴进来的记录，跟这条链路不共用数据，目前也没接上本地判断服务。
+- 网页只做到分析。会话列表和候选句还没接进去，完整的三段目前得走命令行。
 - 逐句判断的质量取决于判断模型本身。Laya 是个三亿参数的小模型，情绪和意图的分布经常很平，一个十二选一的问题最高项只有二成五，这种时候别把百分比当真。
 - 关系判断是概率输出，不是事实。它读不出你们现实里发生的事。
 
