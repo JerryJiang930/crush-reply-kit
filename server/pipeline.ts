@@ -36,6 +36,13 @@ export type PipelineConfig = {
   draft?: ChatConfig;
   /** How many recent messages to judge line by line. 0 turns it off. */
   lineWindow?: number;
+  /**
+   * How many recent messages to include in the returned `messages`. 0 (or
+   * omitted) means all of them — needed for the cold-start baseline, which
+   * reads the full history and should show it, even though only the tail gets
+   * judged line by line.
+   */
+  messageWindow?: number;
   /** How many reply directions to draft. */
   candidates?: number;
   /** Called when a draft fails; defaults to a stderr warning. */
@@ -118,8 +125,11 @@ export async function runPipeline(
       }
     }
 
-    const visibleMessages =
-      lineWindow > 0 ? messages.slice(-lineWindow) : messages.slice(-8);
+    const displayWindow =
+      cfg.messageWindow && cfg.messageWindow > 0
+        ? cfg.messageWindow
+        : messages.length;
+    const visibleMessages = messages.slice(-displayWindow);
 
     const candidates = overview
       ? await draftCandidates(overview, {

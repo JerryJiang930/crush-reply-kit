@@ -20,20 +20,9 @@ import {
 import { topEmotions } from "../shared/labels";
 import { topIntents } from "../shared/intents";
 import { replyRating } from "../shared/ratings";
-import type { Candidate } from "./candidates";
+import type { Candidate, SessionReport } from "../shared/pipeline-types";
 
-export type SessionReport = {
-  peer: string;
-  relation: Relation;
-  overview: Overview | null;
-  /** Per-message judgments, keyed by message id in `messages` order. */
-  lines: LineResult[];
-  /** The messages the lines refer to, already trimmed to the visible window. */
-  messages: Message[];
-  candidates: Candidate[];
-  /** Why the report is thin, when it is. */
-  note?: string;
-};
+export type { Candidate, SessionReport };
 
 /** Average expression quality over the `self` lines that got scored. */
 export function averageQuality(

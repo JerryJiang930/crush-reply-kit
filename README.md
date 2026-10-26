@@ -18,25 +18,21 @@ OUT     给几条不同方向的回复，挑一条     server/candidates.ts · s
 
 ## 最后一步怎么落地
 
-命令行版本停在剪贴板。候选出来之后终端问复制哪一条，输入编号，那条进剪贴板，你再粘过去。按回车默认第一条，输入 `s` 跳过。
+网页里出三张卡片，点一张，按「复制这条」，然后切回微信粘上去。
 
-要做的形态是网页里出候选，点一条、按确定，那条直接发出去，不用切回微信窗口。这件事放最后做，因为它要接管微信的输入框，跟客户端版本绑得紧，微信升级一次就得跟着改一遍。
+自动发送（接管微信输入框，点一下就发出去）还没做。它跟客户端版本绑得紧，微信升级一次就得跟着改；更要紧的是它会省掉人过目那一秒。接口留好了，回头接。
 
-## 网页在哪
+## 网页就是全部
 
-网页界面留着，它是操作台。三段链路接了几段，现在的状况是这样：
+左边选数据源，右边看判断和候选。三段都在这一页里：
 
-1. **THINK 接上了。** 网页的 `/api/analyze` 和命令行的 pipeline 调的是同一个 `evaluate()`，本地判断模型两边通用。在网页的模型设置里选「Laya · 本地判断模型」，地址默认 `http://127.0.0.1:8421`，点检测，它会真跑三道测试题。本地服务不填 API Key。
-2. **IN 还没接。** 网页读的是粘进文本框的记录，跟自动读数据库那条路不共用数据。
-3. **OUT 还没接。** 网页只出分析，不出候选句。
+1. **IN**：左栏「微信库」填解密目录、映射文件、分析对象；或者切「粘贴」直接贴一段记录。
+2. **THINK**：点「开始」，服务器跑完整判断，不是逐句发请求。好感度五维、阶段、下一步、逐句情绪和意图一次返回。
+3. **OUT**：三张候选卡片，主推排第一，点一张复制。
 
-网页这样跑起来：
+第一次接一个人用「建立基线」，它读完整历史，游标存进 `.runtime/peers/`。之后用「更新」，只读上次之后的新消息。
 
-```bash
-npm start
-```
-
-浏览器会自己打开 `http://127.0.0.1:3178`。改前端时用 `npm run dev`，它在 5178 起一个带热更新的页面。
+两个模型各有自己的设置入口，在右上角。都不写死：判断模型填哪个地址都行，起草模型从预设里选或者自己填，接云端 API 也是同一张表单。
 
 ## 开始之前
 
@@ -50,19 +46,19 @@ npm start
 
 ```bash
 npm install
+npm run build      # 第一次，或改了前端之后
 npm run up
 ```
 
-`npm run up` 做四件事：探一下 8421 和 11434 通不通；缺哪个起哪个，已经开着的直接复用；跑一次 IN → THINK → OUT；退出时只关这次自己起的进程。
+`npm run up` 做三件事：探一下 8421 和 11434 通不通；缺哪个起哪个，已经开着的直接复用；起网页并打开 `http://127.0.0.1:3178`。Ctrl+C 一起收，只关这次自己起的进程。
 
-想让服务留着反复用：
+只想起网页（模型已经在别处跑着）：
 
 ```bash
-npm run up:keep     # 服务不关，Ctrl+C 才收
-npm run run         # 另开一个终端再跑一次
+npm start
 ```
 
-服务已经在跑的时候，`npm run run` 就够了。
+改前端时用 `npm run dev`，5178 带热更新。
 
 ## 配置
 
@@ -73,6 +69,8 @@ npm run run         # 另开一个终端再跑一次
 3. 命令行环境变量
 
 ### IN：聊天记录从哪来
+
+网页里左栏填的那三个字段就是全部输入，下面这些是给 `scripts/run.ts`（无界面那条路）用的。
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
@@ -177,28 +175,31 @@ npm run run
 
 | 命令 | 作用 |
 | --- | --- |
-| `npm run up` | 起服务，跑一次，收工 |
-| `npm run up:keep` | 同上，服务留着 |
-| `npm run run` | 只跑一次，假定服务已在跑 |
-| `npm start` | 起网页（3178），只做分析 |
+| `npm run up` | 起模型 + 起网页，Ctrl+C 全收 |
+| `npm start` | 只起网页（3178），假定模型已在跑 |
 | `npm run dev` | 开发网页，5178 热更新 |
+| `npm run build` | 类型检查 + 打包前端 |
 | `npm run inspect -- --dir=…` | 探测微信库结构 |
 | `npm test` | 跑测试 |
 | `npm run typecheck` | 类型检查 |
+
+`scripts/run.ts` 和 `server/report.ts` 还在，是不带界面的批处理与终端渲染，`npx tsx scripts/run.ts` 直接用。它们和网页读同一个 `SessionReport`，不是另一条产品线。
 
 ## 目录
 
 ```
 server/
   pipeline.ts        IN → THINK → OUT 的编排，唯一知道三段都存在的地方
-  report.ts          把完整判断排成终端报告
-  candidates.ts      从判断结果分出几个方向，各写一句
+  pipeline-api.ts    /api/pipeline：网页那一次调用，含基线游标
+  candidates.ts      从判断结果分出三个方向，各写一句
+  report.ts          把完整判断排成终端报告（可选，给批处理用）
   local-decision.ts  判断服务的几种协议方言
   chat-client.ts     聊天补全，两种 HTTP 形状
   chat-config.ts     聊天模型配置的解析与校验
-  deliver.ts         剪贴板和打印
+  chat-settings-api.ts  /api/chat-settings：起草模型的网页配置
+  deliver.ts         剪贴板和打印（命令行用）
   index.ts           网页的 /api 路由
-  settings-api.ts    模型设置的保存与连接检测
+  settings-api.ts    判断模型设置的保存与连接检测
   analysis.ts        拆题、评分维度、关系规则（上游原版）
   provider.ts llm.ts model-config.ts liquid.ts openai-decisions.ts  云端协议栈（上游原版）
 shared/
@@ -207,10 +208,12 @@ shared/
   chat-presets.ts    聊天模型预设
   rules.ts affinity.ts incremental.ts intents.ts labels.ts memory.ts ratings.ts types.ts  判断结构（上游原版）
   parser.ts fixtures.ts model-presets.ts model-selection.ts  网页粘贴那条线用的（上游原版）
-src/                 网页界面，React + vite
+src/
+  Workspace.tsx      唯一页面：数据源、判断、候选
+  App.tsx            上游原版界面，保留可回退，入口已切走
 scripts/
   up.ts              一键启动
-  run.ts             跑一次
+  run.ts             无界面跑一次（可选）
   start.ts           起网页
   inspect-wechat-db.ts  探测库结构
 tests/
@@ -222,7 +225,7 @@ tests/
 
 - 只处理文本消息。图片、语音、表情包在数据库里有记录但没有可读内容，会被跳过。
 - 两个模型都得自己准备好。仓库不带权重，也不下载权重，启动器只去本地缓存里找。
-- 网页只做到分析。会话列表和候选句还没接进去，完整的三段目前得走命令行。
+- 网页只做到「复制」，直接发送还没接。
 - 逐句判断的质量取决于判断模型本身。Laya 是个三亿参数的小模型，情绪和意图的分布经常很平，一个十二选一的问题最高项只有二成五，这种时候别把百分比当真。
 - 关系判断是概率输出，不是事实。它读不出你们现实里发生的事。
 

@@ -6,8 +6,9 @@
 // Nothing about a specific vendor is baked in: a preset only supplies defaults
 // for baseUrl/model, and every field can be overridden. Pointing this at a
 // hosted API instead of the local Ollama takes three env vars and no code.
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync, chmodSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { CHAT_PRESETS, findChatPreset, type ChatWire } from "../shared/chat-presets";
 
@@ -140,6 +141,15 @@ export function resolveChatConfig(
 /** Human-readable one-liner for logs; never prints the key. */
 export function describeChatConfig(c: ChatConfig): string {
   return `[chat] preset=${c.preset} wire=${c.wire} model=${c.model} base=${c.baseUrl} temp=${c.temperature} maxTokens=${c.maxTokens}`;
+}
+
+/** Persists a resolved chat config (masking nothing — it is local-only). */
+export function saveChatConfig(config: ChatConfig): void {
+  mkdirSync(dirname(chatConfigPath), { recursive: true, mode: 0o700 });
+  const temp = `${chatConfigPath}.${randomUUID()}.tmp`;
+  writeFileSync(temp, JSON.stringify(config), { mode: 0o600, flag: "wx" });
+  renameSync(temp, chatConfigPath);
+  if (process.platform !== "win32") chmodSync(chatConfigPath, 0o600);
 }
 
 export { CHAT_PRESETS };

@@ -1,7 +1,6 @@
 // replysmith 一键启动：把三个本地部件当成一个前台进程组来管。
 //
-//   npx tsx scripts/up.ts            # 起服务 -> 跑一次 -> 收工（Ctrl+C 随时中断）
-//   npx tsx scripts/up.ts --keep     # 起服务 -> 跑一次 -> 服务留着，Ctrl+C 才收
+//   npx tsx scripts/up.ts     # 起判断模型 + 起草模型 + 网页，Ctrl+C 全收
 //
 // 上游 crush-monitor 的 npm start 只起一个 node 进程（判断模型在云端），所以
 // Ctrl+C 就干净结束。我们多了两个本地守护进程，于是把它们收在同一个父进程下：
@@ -12,7 +11,6 @@ import { connect } from "node:net";
 import { existsSync, mkdirSync, openSync, readdirSync } from "node:fs";
 import { resolve, dirname, join, delimiter } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runOnce } from "./run";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
@@ -34,7 +32,6 @@ const LAYA_PYTHON = env(
   resolve(projectRoot, ".venv-laya/Scripts/python.exe"),
 );
 
-const keep = process.argv.includes("--keep");
 const started: ChildProcess[] = [];
 
 /**
@@ -250,15 +247,10 @@ async function main(): Promise<void> {
     log("未指定 DRAFT_*，默认用本机 Ollama（qwen3:8b）起草");
   }
 
-  log("跑一次 IN → THINK → OUT …\n");
-  await runOnce();
-
-  if (keep) {
-    log("服务保持运行。另开终端可直接 npx tsx scripts/run.ts；Ctrl+C 结束全部。");
-    await new Promise<void>(() => {});
-  }
-  stopAll();
-  log("已退出");
+  log("起网页 …\n");
+  process.env.CRUSH_OPEN_BROWSER ??= "1";
+  // 直接在当前进程里起，Ctrl+C 一次就能连同三个服务一起收掉。
+  await import("../server/index");
 }
 
 main().catch((e) => {

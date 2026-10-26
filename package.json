@@ -1,23 +1,18 @@
 {
-  "name": "crush-monitor",
-  "version": "1.4.0",
+  "name": "replysmith",
+  "version": "1.5.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n api,web \"tsx watch server/index.ts\" \"vite --host 127.0.0.1\"",
     "build": "tsc --noEmit && vite build",
     "start": "tsx scripts/start.ts",
-    "run": "tsx scripts/run.ts",
     "up": "tsx scripts/up.ts",
-    "up:keep": "tsx scripts/up.ts --keep",
     "inspect": "tsx scripts/inspect-wechat-db.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/*.test.ts",
-    "check:live": "tsx scripts/check-live.ts",
-    "setup": "tsx scripts/setup.ts",
-    "check:api": "tsx scripts/check-api.ts",
-    "export:source": "node scripts/export-source.mjs"
+    "test": "tsx --test tests/*.test.ts"
   },
+  "description": "本地读聊天记录，判断关系，给几个回复方向",
   "dependencies": {
     "@tanstack/react-virtual": "^3.14.13",
     "@typesafe-ai/sdk": "^0.6.0",
@@ -42,7 +37,6 @@
     "vite": "^6.3.0"
   },
   "license": "MIT",
-  "description": "Local-first conversation analysis with Jev or your own LLM API",
   "engines": {
     "node": ">=22.12.0"
   }

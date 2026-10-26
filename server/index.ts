@@ -11,6 +11,8 @@ import {
   publicSettings,
 } from "./model-config";
 import { settingsRouter } from "./settings-api";
+import { chatSettingsRouter } from "./chat-settings-api";
+import { runPipelineApi, pipelineRequestSchema } from "./pipeline-api";
 import { ProviderError, providerErrorMessage } from "./provider";
 const app = express();
 app.disable("x-powered-by");
@@ -41,6 +43,7 @@ app.use("/api", (req, res, next) => {
   next();
 });
 app.use("/api/settings", settingsRouter);
+app.use("/api/chat-settings", chatSettingsRouter);
 app.get("/api/health", (_req, res) => {
   const s = publicSettings();
   res.json({
@@ -142,6 +145,42 @@ app.post("/api/analyze", async (req, res) => {
   }
 });
 const dist = join(dirname(fileURLToPath(import.meta.url)), "../dist");
+app.post("/api/pipeline", async (req, res) => {
+  const valid = pipelineRequestSchema.safeParse(req.body);
+  if (!valid.success) {
+    res.status(400).json({ error: "请求格式不正确，请校正后重试。" });
+    return;
+  }
+  const controller = new AbortController();
+  res.on("close", () => {
+    if (!res.writableEnded) controller.abort();
+  });
+  try {
+    const reports = await runPipelineApi(valid.data, controller.signal);
+    if (!res.writableEnded) res.json({ reports });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      if (!res.writableEnded) res.status(499).json({ error: "已取消" });
+      return;
+    }
+    if (error instanceof ConfigurationError) {
+      if (!res.writableEnded)
+        res.status(503).json({ error: "请先在模型设置里配置判断模型（THINK）。" });
+      return;
+    }
+    const code = Number((error as { status?: number }).status) || 502;
+    if (!res.writableEnded)
+      res
+        .status(code >= 400 && code < 600 ? code : 502)
+        .json({
+          error:
+            error instanceof ConfigurationError ||
+            error instanceof ProviderError
+              ? error.message
+              : providerErrorMessage(error),
+        });
+  }
+});
 app.use(express.static(dist));
 app.get("/", (_req, res) => res.sendFile(join(dist, "index.html")));
 app.use(
