@@ -8,7 +8,9 @@
 // IMPORTANT (伦理红线): any source that touches another person's messages must
 // only process peers the operator has explicitly allowlisted. The adapters
 // enforce `allowedPeers`; an empty allowlist is for local dev only.
+import { readFile } from "node:fs/promises";
 import type { Message } from "./types";
+import { readWeChatSessions, type WeChatMapping } from "./wechat-db";
 
 export type NormalizedSession = {
   /** Stable peer identifier (WeChat nickname / room id). */
@@ -38,9 +40,7 @@ export function createManualSource(config: ManualSourceConfig): SourceAdapter {
   return {
     id: "manual",
     async pull(): Promise<NormalizedSession[]> {
-      const raw = await import("node:fs/promises").then((fs) =>
-        fs.readFile(config.file, "utf8"),
-      );
+      const raw = await readFile(config.file, "utf8");
       const sessions = JSON.parse(raw) as NormalizedSession[];
       return sessions.filter(
         (s) => config.allowedPeers.length === 0 || config.allowedPeers.includes(s.peer),
@@ -49,50 +49,54 @@ export function createManualSource(config: ManualSourceConfig): SourceAdapter {
   };
 }
 
-export type WeChatDecryptConfig = {
-  kind: "wechat-decrypt";
-  /** Base URL of the wechat-decrypt helper's local server (e.g. http://127.0.0.1:8000). */
-  baseUrl: string;
+export type WeChatSourceConfig = {
+  kind: "wechat";
   /**
-   * wechat-decrypt is an EXTERNAL, separately-run tool (328336690/wechat-decrypt,
-   * MIT). We do not bundle or run its decryption here. In production you start it
-   * yourself with admin rights; this adapter only reads its already-decrypted
-   * output over HTTP. The exact response schema MUST be confirmed against a live
-   * instance before trusting it — field names below are best-effort.
+   * 328336690/wechat-decrypt 解出来的 decrypted/ 目录。解密本身是外部工具做的事
+   * （需要管理员权限读微信进程内存），本仓库不碰 SQLCipher，只读它的输出。
    */
+  dbDir: string;
+  /**
+   * 表名/列名的映射文件。微信 4.0 的表结构没有稳定文档，所以不写死——先用
+   * scripts/inspect-wechat-db.ts 对着真实库探测，把结果填进映射文件。
+   */
+  mappingFile: string;
   allowedPeers: string[];
+  /** 每个会话最多带多少条进上下文，默认 80 */
+  maxMessagesPerPeer?: number;
 };
 
 /**
- * Adapter for the external wechat-decrypt helper. Connects to its local server
- * and maps its session shape into NormalizedSession. Not executed automatically
- * against real chat data — requires the operator present and the allowlist set.
+ * 读 wechat-decrypt 解密后的本地库。需要你本人在场、微信 4.0 运行中、以管理员权限
+ * 先跑完 find_all_keys.py + decrypt_db.py；本适配器不触发任何解密动作。
  */
-export function createWeChatDecryptSource(config: WeChatDecryptConfig): SourceAdapter {
+export function createWeChatSource(config: WeChatSourceConfig): SourceAdapter {
   return {
-    id: "wechat-decrypt",
+    id: "wechat",
     async pull(sinceMs: number): Promise<NormalizedSession[]> {
-      const res = await fetch(`${config.baseUrl.replace(/\/+$/, "")}/sessions`);
-      if (!res.ok) throw new Error(`wechat-decrypt 返回 ${res.status}`);
-      const data = (await res.json()) as Array<{
-        peer: string;
-        messages: Array<{ id: string; sender: string; text: string; ts?: number }>;
-      }>;
-      return data
-        .filter((s) => config.allowedPeers.includes(s.peer))
-        .map((s) => {
-          const messages = s.messages.map<Message>((m) => ({
-            id: m.id,
-            sender: m.sender === "self" ? "self" : "other",
-            text: m.text,
-            timestamp: m.ts == null ? null : String(m.ts),
-            kind: "text",
-          }));
-          const latest = s.messages.reduce((mx, m) => Math.max(mx, m.ts ?? 0), 0);
-          return { peer: s.peer, messages, latest };
-        })
-        .filter((s) => s.latest >= sinceMs)
-        .map(({ peer, messages }) => ({ peer, messages }));
+      let mapping: WeChatMapping;
+      try {
+        mapping = JSON.parse(await readFile(config.mappingFile, "utf8")) as WeChatMapping;
+      } catch (err) {
+        throw new Error(
+          `读不到映射文件 ${config.mappingFile}：` +
+            (err instanceof Error ? err.message : String(err)) +
+            "。先跑 npx tsx scripts/inspect-wechat-db.ts --dir=<decrypted 目录> --write",
+        );
+      }
+      if (!mapping?.messages?.table || !mapping.messages.columns?.text) {
+        throw new Error(
+          `映射文件 ${config.mappingFile} 缺 messages.table / messages.columns，` +
+            "用 inspect-wechat-db.ts 重新生成再填。",
+        );
+      }
+      return readWeChatSessions({
+        dbDir: config.dbDir,
+        mapping,
+        allowedPeers: config.allowedPeers,
+        sinceMs,
+        maxMessagesPerPeer: config.maxMessagesPerPeer ?? 80,
+      });
     },
   };
 }

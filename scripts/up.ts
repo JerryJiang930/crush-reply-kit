@@ -10,7 +10,7 @@
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { connect } from "node:net";
 import { existsSync, mkdirSync, openSync, readdirSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, join, delimiter } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runOnce } from "./run";
 
@@ -169,6 +169,31 @@ async function ensureDecisionService(): Promise<boolean> {
   return waitPort("判断服务", DECISION_PORT, 120);
 }
 
+/**
+ * llama-server only searches its own directory and the CWD when loading ggml
+ * backends, but the GPU ones sit in a subdirectory (lib/ollama/cuda_v12 or
+ * _v13). Without GGML_BACKEND_PATH it finds nothing, reports library=cpu, and a
+ * 4.86GB Qwen3 then has to fit in RAM — dying with "llama-server process has
+ * terminated: exit status 1" while /api/tags still answers 200, so the service
+ * looks healthy and every draft silently fails.
+ *
+ * The variable must point at the .dll file, not the directory; the CUDA DLLs
+ * also need their folder on PATH for cublas/cudart.
+ */
+function gpuEnv(binPath: string): Record<string, string> {
+  const libRoot = join(dirname(binPath), "lib", "ollama");
+  // Prefer the newest CUDA build present; Ollama ships several.
+  const variants = ["cuda_v13", "cuda_v12"]
+    .map((v) => join(libRoot, v))
+    .filter((dir) => existsSync(join(dir, "ggml-cuda.dll")));
+  const dir = variants[0];
+  if (!dir) return {};
+  return {
+    GGML_BACKEND_PATH: join(dir, "ggml-cuda.dll"),
+    PATH: `${dir}${delimiter}${process.env.PATH ?? ""}`,
+  };
+}
+
 async function ensureChatService(): Promise<boolean> {
   if (await portOpen(CHAT_PORT)) {
     log(`聊天模型已在 ${CHAT_PORT}，复用，不重复启动`);
@@ -179,12 +204,19 @@ async function ensureChatService(): Promise<boolean> {
     return false;
   }
   log("启动聊天模型（Ollama serve）…");
+  const gpu = gpuEnv(OLLAMA_BIN);
+  if (gpu.GGML_BACKEND_PATH) {
+    log(`  显卡后端：${gpu.GGML_BACKEND_PATH}`);
+  } else {
+    log("  没找到 CUDA 后端，会退回 CPU（慢且可能内存不足）");
+  }
   const out = logSink("ollama.log");
   const child = spawn(OLLAMA_BIN, ["serve"], {
     cwd: dirname(OLLAMA_BIN),
     stdio: ["ignore", out, out],
     env: {
       ...process.env,
+      ...gpu,
       OLLAMA_HOST: `127.0.0.1:${CHAT_PORT}`,
       OLLAMA_KEEP_ALIVE: "30m",
     },

@@ -78,3 +78,46 @@ test("empty source yields no results and touches nothing", async () => {
     await stub.close();
   }
 });
+
+test("a dead chat model degrades to the strategy but reports why", async () => {
+  const stub = await startStubDecisionServer();
+  try {
+    const decisionConfig: LocalConfig = {
+      engine: "local",
+      provider: "stub",
+      name: "stub",
+      endpoint: stub.endpoint,
+      model: "stub-decision-engine",
+      apiKey: "local",
+      protocol: "local",
+      dialect: "systemone",
+    };
+    const failures: string[] = [];
+    const results = await runPipeline({
+      source: inlineSource([{ peer: "小满", messages: sampleMessages }]),
+      decisionConfig,
+      deliverConfig: { mode: "print" },
+      relation: "crush",
+      // Nothing listens here: the draft must fail without killing the run.
+      draft: {
+        preset: "custom",
+        baseUrl: "http://127.0.0.1:1/v1",
+        model: "dead",
+        apiKey: "local",
+        temperature: 0.7,
+        maxTokens: 100,
+        timeoutMs: 2000,
+        wire: "openai",
+      },
+      onDraftError: (peer, message) => failures.push(`${peer}: ${message}`),
+    });
+
+    assert.equal(results.length, 1, "the session must still produce a result");
+    assert.equal(results[0].drafted, false);
+    assert.match(results[0].text, /replysmith 建议/, "falls back to the strategy");
+    assert.equal(failures.length, 1, "the failure must surface, not vanish");
+    assert.match(failures[0], /小满/);
+  } finally {
+    await stub.close();
+  }
+});

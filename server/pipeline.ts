@@ -37,9 +37,15 @@ export type PipelineConfig = {
   sinceMs?: number;
   /** Optional chat model that turns the chosen action into a full reply. */
   draft?: ChatConfig;
+  /** Called when a draft fails; defaults to a stderr warning. */
+  onDraftError?: (peer: string, message: string) => void;
   /** Relation used by the analyzer; mirrors crush-monitor's relation enum. */
   relation?: "crush" | "new" | "couple";
 };
+
+function defaultDraftError(peer: string, message: string): void {
+  console.warn(`[replysmith] ${peer} 的草稿生成失败，已退回结构化建议：${message}`);
+}
 
 export type PipelineResult = {
   peer: string;
@@ -92,8 +98,13 @@ export function buildDraftPrompt(
 
 /**
  * Optional: ask a local chat model for the actual sentence to send, given the
- * chat and the recommended action. Never throws — on any failure we fall back
- * to the structured recommendation so the pipeline still produces output.
+ * chat and the recommended action.
+ *
+ * Throws on failure — the caller decides whether to fall back. Swallowing the
+ * error here once cost a debugging session: the chat service answered 200 on
+ * /api/tags while its llama-server had fallen back to the CPU backend and died
+ * on every request, so every draft silently degraded to the structured
+ * suggestion with no clue why.
  */
 async function generateDraft(
   overview: Overview,
@@ -102,19 +113,15 @@ async function generateDraft(
   fetchImpl: typeof fetch = fetch,
 ): Promise<string | null> {
   const { system, user } = buildDraftPrompt(overview, recent);
-  try {
-    const result = await chatComplete(
-      draft,
-      [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      fetchImpl,
-    );
-    return result.text || null;
-  } catch {
-    return null;
-  }
+  const result = await chatComplete(
+    draft,
+    [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+    fetchImpl,
+  );
+  return result.text || null;
 }
 
 function lastMessages(session: { messages: { text: string; sender: string }[] }, n = 6): string {
@@ -153,12 +160,19 @@ export async function runPipeline(
     let drafted = false;
 
     if (cfg.draft) {
-      const draft = await generateDraft(overview, lastMessages(session), cfg.draft);
-      if (draft) {
-        // Keep the paste clean: the sentence only. The strategy travels beside
-        // it in `strategy` so the terminal (or UI) can show it separately.
-        text = draft;
-        drafted = true;
+      try {
+        const draft = await generateDraft(overview, lastMessages(session), cfg.draft);
+        if (draft) {
+          // Keep the paste clean: the sentence only. The strategy travels beside
+          // it in `strategy` so the terminal (or UI) can show it separately.
+          text = draft;
+          drafted = true;
+        }
+      } catch (err) {
+        // A dead chat model must not sink the whole run: we still have the
+        // strategy. But say why, loudly enough to notice.
+        const msg = err instanceof Error ? err.message : String(err);
+        (cfg.onDraftError ?? defaultDraftError)(session.peer, msg);
       }
     }
 

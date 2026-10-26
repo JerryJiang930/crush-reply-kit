@@ -7,20 +7,19 @@
 // deliver step defaults to "print" so nothing touches your clipboard unless you
 // opt in. To actually copy to clipboard, set DELIVER_MODE=clipboard.
 //
-// Real WeChat ingestion is OFF by default. Set SOURCE=wechat-decrypt and
-// WECHAT_DECRYPT_URL to enable it — requires you to run 328336690/wechat-decrypt
-// yourself with admin rights, and to set ALLOWED_PEERS to the peers you may
-// process. Do not run it against peers who have not consented.
+// Real WeChat ingestion is OFF by default. Set SOURCE=wechat plus WECHAT_DB_DIR
+// (the decrypted/ directory produced by 328336690/wechat-decrypt) and
+// ALLOWED_PEERS to enable it. You must run that tool yourself with admin rights:
+// it extracts keys from the running WeChat process and decrypts the SQLCipher
+// databases. This repo only reads its output. Do not run it against peers who
+// have not consented.
 //
 // The pipeline itself is exported as runOnce() so scripts/up.ts can boot the
 // local services and then call it in-process, the same way upstream's start.ts
 // simply imports server/index and lets it run.
 import { pathToFileURL } from "node:url";
 import { runPipeline, type PipelineResult } from "../server/pipeline";
-import {
-  createManualSource,
-  createWeChatDecryptSource,
-} from "../shared/sources";
+import { createManualSource, createWeChatSource } from "../shared/sources";
 import type { LocalConfig } from "../server/model-config";
 import { describeChatConfig, resolveChatConfig } from "../server/chat-config";
 
@@ -55,22 +54,31 @@ export async function runOnce(): Promise<PipelineResult[]> {
 
   const draft = resolveChatConfig();
 
-  const source =
-    sourceKind === "wechat-decrypt"
-      ? createWeChatDecryptSource({
-          kind: "wechat-decrypt",
-          baseUrl: env("WECHAT_DECRYPT_URL", "http://127.0.0.1:8000"),
-          allowedPeers,
-        })
-      : createManualSource({
-          kind: "manual",
-          file: env("SESSIONS_FILE", "examples/sample-sessions.json"),
-          allowedPeers,
-        });
+  // "wechat-decrypt" 是旧名字，保留兼容；两者都指向同一个读库适配器。
+  const wantsWeChat = sourceKind === "wechat" || sourceKind === "wechat-decrypt";
+  const source = wantsWeChat
+    ? createWeChatSource({
+        kind: "wechat",
+        dbDir: env("WECHAT_DB_DIR", ""),
+        mappingFile: env("WECHAT_MAPPING", ".runtime/wechat-mapping.json"),
+        allowedPeers,
+      })
+    : createManualSource({
+        kind: "manual",
+        file: env("SESSIONS_FILE", "examples/sample-sessions.json"),
+        allowedPeers,
+      });
 
-  if (sourceKind === "wechat-decrypt" && allowedPeers.length === 0) {
+  if (wantsWeChat && allowedPeers.length === 0) {
     console.error(
-      "[replysmith] 伦理红线：开启微信抓取前必须设置 ALLOWED_PEERS，只处理你已登记的会话。已退出。",
+      "[replysmith] 伦理红线：开启微信读取前必须设置 ALLOWED_PEERS，只处理你已登记的会话。已退出。",
+    );
+    process.exitCode = 2;
+    return [];
+  }
+  if (wantsWeChat && !env("WECHAT_DB_DIR")) {
+    console.error(
+      "[replysmith] 需要 WECHAT_DB_DIR 指向 wechat-decrypt 的 decrypted/ 目录。已退出。",
     );
     process.exitCode = 2;
     return [];
