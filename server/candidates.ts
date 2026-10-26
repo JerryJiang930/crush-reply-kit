@@ -8,7 +8,7 @@
 import { ACTIONS, STAGES, type Overview } from "../shared/types";
 import { chatComplete } from "./chat-client";
 import type { ChatConfig } from "./chat-config";
-import type { Candidate } from "../shared/pipeline-types";
+import type { Candidate, Profile } from "../shared/pipeline-types";
 
 export type { Candidate };
 
@@ -102,16 +102,29 @@ export const DRAFT_SYSTEM_PROMPT =
   "也不要问对方在哪、什么时候有空。所有推进都只发生在聊天里，靠话题和情绪。" +
   "只输出这句话本身。 /no_think";
 
+/** 把人写进提示词。缺哪项就不提哪项，不编。 */
+function profileBlock(profile?: Profile): string {
+  if (!profile) return "";
+  const bits = [
+    profile.age ? `${profile.age} 岁` : "",
+    profile.role ?? "",
+    profile.note ?? "",
+  ].filter(Boolean);
+  return bits.length ? `对方是谁：${bits.join("，")}\n` : "";
+}
+
 export function buildDraftPrompt(
   overview: Overview,
   recent: string,
   actionKey: string = overview.action,
+  profile?: Profile,
 ): { system: string; user: string } {
   const action = ACTIONS[actionKey] ?? ACTIONS.insufficient;
   return {
     system: DRAFT_SYSTEM_PROMPT,
     user:
       `对话最近内容：\n${recent}\n\n` +
+      profileBlock(profile) +
       `关系阶段：${STAGES[overview.stage] ?? STAGES.unknown}\n` +
       `本轮方向：${action.label} —— ${action.detail}\n\n` +
       `写一句符合这个方向的回复。只聊线上，不提见面和出门。`,
@@ -124,6 +137,8 @@ export type DraftDeps = {
   recent: string;
   count?: number;
   fetchImpl?: typeof fetch;
+  /** 对方是谁，聊天记录读不出来的那些。 */
+  profile?: Profile;
   /** Called per failed draft; the candidate stays, its text stays null. */
   onError?: (actionKey: string, message: string) => void;
 };
@@ -149,7 +164,7 @@ export async function draftCandidates(
       const base = { action, label: a.label, detail: a.detail, source };
       if (!deps.chat || SILENT.has(action)) return { ...base, text: null };
 
-      const { system, user } = buildDraftPrompt(overview, deps.recent, action);
+      const { system, user } = buildDraftPrompt(overview, deps.recent, action, deps.profile);
       try {
         const result = await chatComplete(
           deps.chat,

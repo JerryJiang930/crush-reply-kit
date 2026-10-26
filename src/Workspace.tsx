@@ -364,6 +364,9 @@ export default function Workspace() {
   const [peer, setPeer] = useState(saved.peer ?? "");
   const [raw, setRaw] = useState("");
   const [selfName, setSelfName] = useState(saved.selfName ?? "我");
+  const [age, setAge] = useState(saved.age ?? "");
+  const [role, setRole] = useState(saved.role ?? "");
+  const [note, setNote] = useState(saved.note ?? "");
   const [relation, setRelation] = useState<Relation>("crush");
   const [mode, setMode] = useState<"baseline" | "update">("baseline");
   const [busy, setBusy] = useState(false);
@@ -379,9 +382,9 @@ export default function Workspace() {
   useEffect(() => {
     localStorage.setItem(
       LS,
-      JSON.stringify({ dbDir, mappingFile, peer, selfName }),
+      JSON.stringify({ dbDir, mappingFile, peer, selfName, age, role, note }),
     );
-  }, [dbDir, mappingFile, peer, selfName]);
+  }, [dbDir, mappingFile, peer, selfName, age, role, note]);
 
   const openJudge = useCallback(async () => {
     setModelOpen(true);
@@ -426,6 +429,7 @@ export default function Workspace() {
         source,
         relation,
         mode,
+        profile: { age, role, note },
         lineWindow: 12,
         messageWindow: 0,
       });
@@ -526,6 +530,29 @@ export default function Workspace() {
                 ))}
               </select>
             </label>
+            <div className="ws-profile">
+              <span className="ws-kicker">对方是谁</span>
+              <div className="ws-row">
+                <input
+                  value={age}
+                  onChange={(e) => setAge(e.target.value)}
+                  placeholder="年龄"
+                />
+                <input
+                  value={role}
+                  onChange={(e) => setRole(e.target.value)}
+                  placeholder="身份 / 职业"
+                />
+              </div>
+              <input
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="脾气、习惯、说话方式"
+              />
+              <p className="ws-hint">
+                聊天记录看不出来的东西填这里，写出来的句子才会像在跟这个具体的人说话。
+              </p>
+            </div>
             <div className="ws-modes">
               <button className={mode === "baseline" ? "on" : ""} onClick={() => setMode("baseline")}>
                 建立基线

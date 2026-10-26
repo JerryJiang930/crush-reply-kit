@@ -8,6 +8,16 @@ import type { LineResult, Message, Overview, Relation } from "./types";
 
 export type CandidateSource = "primary" | "alternative" | "caution";
 
+/**
+ * 聊天记录读不出来的东西：多大、做什么的、什么脾气。
+ * 判断模型只看得见文本，这些只能由人补，补了写出来的句子才像在跟这个具体的人说话。
+ */
+export type Profile = {
+  age?: string;
+  role?: string;
+  note?: string;
+};
+
 /** 一条回复方向。text 为 null 时表示「这个方向先不发」（wait / respect）。 */
 export type Candidate = {
   /** ACTIONS 里的动作键。 */

@@ -50,10 +50,19 @@ const sourceSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
+const profileSchema = z
+  .object({
+    age: z.string().trim().max(20).optional(),
+    role: z.string().trim().max(120).optional(),
+    note: z.string().trim().max(400).optional(),
+  })
+  .strict();
+
 export const pipelineRequestSchema = z.object({
   source: sourceSchema,
   relation: z.enum(["crush", "new", "couple"]).default("crush"),
   mode: z.enum(["baseline", "update"]).default("baseline"),
+  profile: profileSchema.optional(),
   lineWindow: z.number().int().min(0).max(200).default(12),
   messageWindow: z.number().int().min(0).max(4000).default(0),
 });
@@ -166,6 +175,7 @@ export async function runPipelineApi(
     decisionConfig: activeConfig(),
     draft,
     relation: req.relation as Relation,
+    profile: req.profile,
     lineWindow: req.lineWindow,
     messageWindow: req.messageWindow,
     sinceMs,

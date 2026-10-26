@@ -279,3 +279,20 @@ test("pipeline falls back to the structured suggestion when the draft model is d
     await stub.close();
   }
 });
+
+// 「对方是谁」只补聊天记录读不出来的东西，缺哪项就不提哪项，不能编。
+test("profile 进提示词，空字段不出现", () => {
+  const o = { action: "continue", stage: "dating" } as never;
+  const filled = buildDraftPrompt(o, "对方：在吗", "continue", {
+    age: "28",
+    role: "做建筑设计",
+    note: "回消息慢但不敷衍",
+  });
+  assert.match(filled.user, /对方是谁：28 岁，做建筑设计，回消息慢但不敷衍/);
+
+  const empty = buildDraftPrompt(o, "对方：在吗", "continue", {});
+  assert.doesNotMatch(empty.user, /对方是谁/);
+
+  const none = buildDraftPrompt(o, "对方：在吗", "continue");
+  assert.doesNotMatch(none.user, /对方是谁/);
+});

@@ -451,3 +451,31 @@
     border-bottom: 1px solid var(--line, #dedfe0);
   }
 }
+
+/* 对方是谁：两个短输入并排，下面一条长的 */
+.ws-profile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ws-profile .ws-kicker {
+  margin-bottom: 1px;
+}
+.ws-row {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 6px;
+}
+.ws-profile input {
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 9px;
+  border: 1px solid #d3d5d6;
+  border-radius: 6px;
+  background: #fff;
+  color: inherit;
+}
+.ws-profile input:focus {
+  outline: 2px solid var(--focus, #497563);
+  outline-offset: -1px;
+}

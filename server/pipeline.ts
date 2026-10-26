@@ -22,7 +22,8 @@ import type { ActiveConfig } from "./model-config";
 import { draftCandidates, type Candidate } from "./candidates";
 import type { ChatConfig } from "./chat-config";
 import type { LineResult, Relation } from "../shared/types";
-import type { SessionReport } from "./report";
+import type { SessionReport } from "../shared/pipeline-types";
+import type { Profile } from "../shared/pipeline-types";
 import type { SourceAdapter } from "../shared/sources";
 
 export type { ChatConfig, Candidate, SessionReport };
@@ -49,6 +50,8 @@ export type PipelineConfig = {
   onDraftError?: (peer: string, action: string, message: string) => void;
   /** Relation used by the analyzer; mirrors crush-monitor's relation enum. */
   relation?: Relation;
+  /** 对方是谁：年龄、身份、脾气。聊天记录里读不出来的，人补。 */
+  profile?: Profile;
 };
 
 function defaultDraftError(peer: string, action: string, message: string): void {
@@ -136,6 +139,7 @@ export async function runPipeline(
           chat: cfg.draft,
           recent: lastMessages(visibleMessages),
           count: cfg.candidates,
+          profile: cfg.profile,
           onError: (action, message) =>
             (cfg.onDraftError ?? defaultDraftError)(session.peer, action, message),
         })
