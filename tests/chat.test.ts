@@ -14,7 +14,7 @@ import {
   resolveChatConfig,
 } from "../server/chat-config";
 import { runPipeline } from "../server/pipeline";
-import { buildDraftPrompt } from "../server/candidates";
+import { buildDraftPrompt, judgmentSignals } from "../server/candidates";
 import { startStubDecisionServer } from "../tools/stub-decision-server";
 import type { LocalConfig } from "../server/model-config";
 
@@ -295,4 +295,35 @@ test("profile 进提示词，空字段不出现", () => {
 
   const none = buildDraftPrompt(o, "对方：在吗", "continue");
   assert.doesNotMatch(none.user, /对方是谁/);
+});
+
+// 判断出来的概率要进提示词，不能只在界面上画着看。
+test("判断摘要进提示词", () => {
+  const overview = {
+    action: "continue",
+    stage: "dating",
+    affinity: { value: 25, status: "insufficient", confidence: 0.3, probabilities: {} },
+    rapport: { value: 50, status: "ambiguous", confidence: 0.5, probabilities: {} },
+  } as never;
+  const lines = [
+    {
+      id: "m1",
+      emotions: { calm: 0.41, caring: 0.22, annoyed: 0.1 },
+      intents: { share: 0.78, seek_comfort: 0.22 },
+      score: { value: null, confidence: 0, status: "insufficient", probabilities: {} },
+    },
+  ] as never;
+  const messages = [
+    { id: "m1", sender: "other", text: "累死了", timestamp: null, kind: "text" },
+  ] as never;
+
+  const signals = judgmentSignals(overview, lines, messages);
+  assert.match(signals, /好感度 25/);
+  assert.match(signals, /情绪 平静/);
+  assert.match(signals, /意图 分享近况/);
+  assert.match(signals, /对方最近这几句的判断/);
+
+  const prompt = buildDraftPrompt(overview, "对方：累死了", "continue", {}, signals);
+  assert.match(prompt.user, /判断（概率/);
+  assert.match(prompt.user, /好感度 25/);
 });

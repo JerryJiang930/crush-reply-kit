@@ -5,7 +5,17 @@
 // the primary is forward-leaning, show the step back; when it is already
 // holding, show the close. Three directions is the point where a choice still
 // means something; five would just be a menu.
-import { ACTIONS, STAGES, type Overview } from "../shared/types";
+import {
+  ACTIONS,
+  STAGES,
+  grade,
+  statusLabel,
+  type LineResult,
+  type Message,
+  type Overview,
+} from "../shared/types";
+import { topEmotions } from "../shared/labels";
+import { topIntents } from "../shared/intents";
 import { chatComplete } from "./chat-client";
 import type { ChatConfig } from "./chat-config";
 import type { Candidate, Profile } from "../shared/pipeline-types";
@@ -113,19 +123,66 @@ function profileBlock(profile?: Profile): string {
   return bits.length ? `对方是谁：${bits.join("，")}\n` : "";
 }
 
+/**
+ * 判断结果本身也是写句子的材料：好感度多高、对方刚才那句话是平静还是烦、
+ * 想缓和还是想被安慰。之前这些只拿去画界面，模型看不到，句子就只能靠猜语气。
+ */
+export function judgmentSignals(
+  overview: Overview,
+  lines: LineResult[],
+  messages: Message[],
+): string {
+  const byId = new Map(lines.map((l) => [l.id, l]));
+  const head = [
+    `好感度 ${overview.affinity.value ?? "—"}/100（${statusLabel(overview.affinity)}）`,
+    overview.rapport ? `氛围 ${grade(overview.rapport.value)}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const recent = messages
+    .slice(-8)
+    .filter((m) => m.sender === "other" && byId.has(m.id))
+    .slice(-2)
+    .map((m) => {
+      const line = byId.get(m.id)!;
+      const emotions = topEmotions(line.emotions)
+        .slice(0, 3)
+        .map((e) => `${e.label} ${e.percent}`)
+        .join(" · ");
+      const intents = topIntents(line.intents)
+        .slice(0, 2)
+        .map((i) => `${i.label} ${i.percent}`)
+        .join(" · ");
+      return [emotions ? `情绪 ${emotions}` : "", intents ? `意图 ${intents}` : ""]
+        .filter(Boolean)
+        .join("；");
+    })
+    .filter(Boolean);
+
+  return [
+    head,
+    ...(recent.length
+      ? ["对方最近这几句的判断：", ...recent.map((r, i) => `  ${i + 1}. ${r}`)]
+      : []),
+  ].join("\n");
+}
+
 export function buildDraftPrompt(
   overview: Overview,
   recent: string,
   actionKey: string = overview.action,
   profile?: Profile,
+  signals?: string,
 ): { system: string; user: string } {
   const action = ACTIONS[actionKey] ?? ACTIONS.insufficient;
   return {
     system: DRAFT_SYSTEM_PROMPT,
     user:
       `对话最近内容：\n${recent}\n\n` +
+      (signals ? `判断（概率，只当语气参考，别把数字写进回复）：\n${signals}\n\n` : "") +
       profileBlock(profile) +
-      `关系阶段：${STAGES[overview.stage] ?? STAGES.unknown}\n` +
+      `关系阶段：${STAGES[overview.stage] ?? "未确定"}\n` +
       `本轮方向：${action.label} —— ${action.detail}\n\n` +
       `写一句符合这个方向的回复。只聊线上，不提见面和出门。`,
   };
@@ -139,6 +196,8 @@ export type DraftDeps = {
   fetchImpl?: typeof fetch;
   /** 对方是谁，聊天记录读不出来的那些。 */
   profile?: Profile;
+  /** judgmentSignals() 打好的判断摘要，进提示词。 */
+  signals?: string;
   /** Called per failed draft; the candidate stays, its text stays null. */
   onError?: (actionKey: string, message: string) => void;
 };
@@ -164,7 +223,13 @@ export async function draftCandidates(
       const base = { action, label: a.label, detail: a.detail, source };
       if (!deps.chat || SILENT.has(action)) return { ...base, text: null };
 
-      const { system, user } = buildDraftPrompt(overview, deps.recent, action, deps.profile);
+      const { system, user } = buildDraftPrompt(
+        overview,
+        deps.recent,
+        action,
+        deps.profile,
+        deps.signals,
+      );
       try {
         const result = await chatComplete(
           deps.chat,

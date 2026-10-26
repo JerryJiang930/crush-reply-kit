@@ -19,7 +19,7 @@
 import { analyze } from "./analysis";
 import { incrementalJobs, overviewJob } from "../shared/incremental";
 import type { ActiveConfig } from "./model-config";
-import { draftCandidates, type Candidate } from "./candidates";
+import { draftCandidates, judgmentSignals, type Candidate } from "./candidates";
 import type { ChatConfig } from "./chat-config";
 import type { LineResult, Relation } from "../shared/types";
 import type { SessionReport } from "../shared/pipeline-types";
@@ -140,6 +140,7 @@ export async function runPipeline(
           recent: lastMessages(visibleMessages),
           count: cfg.candidates,
           profile: cfg.profile,
+          signals: judgmentSignals(overview, [...lines.values()], visibleMessages),
           onError: (action, message) =>
             (cfg.onDraftError ?? defaultDraftError)(session.peer, action, message),
         })
