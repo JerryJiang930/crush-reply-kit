@@ -8,8 +8,6 @@
 ![platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078d6?logo=windows&logoColor=white)
 ![license](https://img.shields.io/badge/license-MIT-8f5670)
 
-![主界面：中间是聊天记录，右侧是好感度和可发的方向](docs/images/screenshot.png)
-
 分析结果来自模型对文字的判读，读不到聊天之外的现实，对方回得慢可能只是忙。只当参考。
 
 ## 能做什么
