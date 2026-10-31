@@ -1,6 +1,10 @@
 MIT License
 
 Copyright (c) 2026 Crush Monitor contributors
+Copyright (c) 2026 Crush Reply Kit contributors
+
+This project is based on crush-monitor (https://github.com/FerryCorleone/crush-monitor),
+which is also MIT licensed; its copyright notice is retained above as required.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

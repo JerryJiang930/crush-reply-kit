@@ -13,7 +13,7 @@ const SELF = "wxid_self";
 const OTHER = "wxid_other";
 
 function build(): string {
-  const root = mkdtempSync(join(tmpdir(), "replysmith-wechat-"));
+  const root = mkdtempSync(join(tmpdir(), "crush-reply-kit-wechat-"));
   // 目录名带设备后缀，自己的 wxid 靠它推出来。
   const dir = join(root, `${SELF}_abcd`, "db_storage");
   mkdirSync(join(dir, "message"), { recursive: true });

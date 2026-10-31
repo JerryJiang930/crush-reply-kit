@@ -46,6 +46,14 @@ export const requestSchema = z
     relation: z.enum(["crush", "new", "couple"]),
     task: z.enum(["overview", "other_messages", "self_message"]),
     targetIds: z.array(z.string().max(80)).max(20),
+    profile: z
+      .object({
+        age: z.string().max(20).optional(),
+        role: z.string().max(120).optional(),
+        note: z.string().max(400).optional(),
+        relationNote: z.string().max(400).optional(),
+      })
+      .optional(),
     messages: z
       .array(
         z.object({
@@ -153,7 +161,20 @@ export function buildRequest(input: AnalysisRequest) {
     ...(m.kind === "unreadable" ? { kind: m.kind } : {}),
   });
   const state = {
-    relationship: RELATIONS[input.relation],
+    // 关系基准：用户自己写的那句话就是基准本身，不再套枚举标签，
+    // 这样"认识一段时间的朋友，不暧昧"不会被"刚认识"或"暧昧中"盖掉。
+    relationship: input.profile?.relationNote?.trim()
+      ? input.profile.relationNote.trim()
+      : RELATIONS[input.relation],
+    ...(input.profile?.age || input.profile?.role || input.profile?.note
+      ? {
+          who: {
+            ...(input.profile.age ? { age: input.profile.age } : {}),
+            ...(input.profile.role ? { role: input.profile.role } : {}),
+            ...(input.profile.note ? { note: input.profile.note } : {}),
+          },
+        }
+      : {}),
     messages: messages.map(compact),
     ...(input.task === "overview"
       ? {

@@ -4,7 +4,7 @@
 // swappable behind an interface and nothing about a model, peer, or source is
 // hardcoded here:
 //   IN  : a SourceAdapter (shared/sources.ts) yields NormalizedSession[]
-//   THINK: crush-monitor's analyze(), driven by a local decision config
+//   THINK: crush-monitor's analyze(), driven by a decision config
 //   OUT : draftCandidates() turns the judgment into several reply directions
 //
 // THINK runs two kinds of job. `overviewJob` produces the relationship reading
@@ -18,6 +18,7 @@
 // decides what to show and what to copy.
 import { analyze } from "./analysis";
 import { incrementalJobs, overviewJob } from "../shared/incremental";
+import type { Message } from "../shared/types";
 import type { ActiveConfig } from "./model-config";
 import { draftCandidates, judgmentSignals, type Candidate } from "./candidates";
 import { summarizeOlder } from "./summarize";
@@ -63,7 +64,7 @@ export type PipelineConfig = {
 };
 
 function defaultDraftError(peer: string, action: string, message: string): void {
-  console.warn(`[replysmith] ${peer} 的「${action}」方向没写出来：${message}`);
+  console.warn(`[crush-reply-kit] ${peer} 的「${action}」方向没写出来：${message}`);
 }
 
 /** Merge per-message judgments; a later job may fill fields an earlier one left. */
@@ -92,13 +93,21 @@ function lastMessages(
 export async function runPipeline(
   cfg: PipelineConfig,
 ): Promise<SessionReport[]> {
-  const relation = cfg.relation ?? "crush";
-  const sessions = await cfg.source.pull(cfg.sinceMs ?? 0);
-  const reports: SessionReport[] = [];
-  const lineWindow = Math.max(0, cfg.lineWindow ?? 12);
+    const relation = cfg.relation ?? "crush";
+    const sessions = await cfg.source.pull(cfg.sinceMs ?? 0);
+    const reports: SessionReport[] = [];
 
-  for (const session of sessions) {
-    const messages = session.messages;
+    for (const session of sessions) {
+      const messages = session.messages;
+      // 判定窗口跟展示窗口对齐：前端不传时，lineWindow 取 messageWindow，都没有就判全部。
+      // 逐句是一条一次请求，几千条能把模型压死，所以这里再封一道 60 的顶。
+      const windowHint =
+        cfg.lineWindow && cfg.lineWindow > 0
+          ? cfg.lineWindow
+          : cfg.messageWindow && cfg.messageWindow > 0
+            ? cfg.messageWindow
+            : messages.length;
+      const lineWindow = Math.min(Math.max(0, windowHint), 60);
     if (!messages.length) {
       reports.push({
         peer: session.peer,
@@ -113,9 +122,11 @@ export async function runPipeline(
       continue;
     }
 
+    const judgeMessages = messages;
+
     // 1. The relationship reading.
     const overviewResult = await analyze(
-      overviewJob(messages, relation, 1, {}),
+      overviewJob(judgeMessages, relation, 1, {}, cfg.profile),
       undefined,
       cfg.decisionConfig,
     );
@@ -133,10 +144,17 @@ export async function runPipeline(
           .filter((m) => m.kind === "text")
           .map((m) => m.id),
       );
-      const jobs = incrementalJobs(messages, relation, 1, {}, {}, true).filter(
-        (job) => job.targetIds.some((id) => visible.has(id)),
-      );
-      for (const job of jobs) {
+      const jobs = incrementalJobs(
+        judgeMessages,
+        relation,
+        1,
+        {},
+        {},
+        true,
+        cfg.profile,
+      ).filter((job) => job.targetIds.some((id) => visible.has(id)));
+      const batches = jobs;
+      for (const job of batches) {
         const result = await analyze(job, undefined, cfg.decisionConfig);
         mergeLines(lines, result.lines);
       }

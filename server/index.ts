@@ -3,6 +3,7 @@ import "dotenv/config";
 import express from "express";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
+import { readFileSync, writeFileSync } from "node:fs";
 import { analyze, requestSchema } from "./analysis";
 import { ConfigurationError } from "./provider-config";
 import {
@@ -147,6 +148,15 @@ app.post("/api/analyze", async (req, res) => {
   }
 });
 const dist = join(dirname(fileURLToPath(import.meta.url)), "../dist");
+const runtimeDir = join(dirname(fileURLToPath(import.meta.url)), "..", ".runtime");
+app.get("/api/last-report", (_req, res) => {
+  try {
+    res.json(JSON.parse(readFileSync(join(runtimeDir, "last-report.json"), "utf8")));
+  } catch {
+    res.status(404).json({ error: "还没有分析过。" });
+  }
+});
+
 app.post("/api/pipeline", async (req, res) => {
   const valid = pipelineRequestSchema.safeParse(req.body);
   if (!valid.success) {
@@ -169,7 +179,22 @@ app.post("/api/pipeline", async (req, res) => {
   });
   try {
     const reports = await runPipelineApi(valid.data, controller.signal);
-    if (!res.writableEnded) res.json({ reports });
+    if (!res.writableEnded) {
+      res.json({ reports });
+      // 刷新页面不该等于丢掉结果：留一份最近的，重开页面直接读回来。
+      try {
+        writeFileSync(
+          join(runtimeDir, "last-report.json"),
+          JSON.stringify({
+            at: Date.now(),
+            relation: valid.data.relation,
+            reports,
+          }),
+        );
+      } catch {
+        /* 存不下不影响本次结果 */
+      }
+    }
   } catch (error) {
     if (controller.signal.aborted) {
       if (!res.writableEnded) res.status(499).json({ error: "已取消" });

@@ -218,7 +218,8 @@ export async function evaluateLlm(
 ) {
   const local = new AbortController();
   const requestSignal = AbortSignal.any([
-    AbortSignal.timeout(180000),
+    // 逐句是一条一次请求。本地 8B 模型判几十条要几分钟，180 秒会把它判成网络故障。
+    AbortSignal.timeout(600000),
     local.signal,
     ...(signal ? [signal] : []),
   ]);
@@ -364,15 +365,16 @@ export async function evaluateLlm(
         /* Invalid envelope: retry only this batch, never use partial JSON. */
       }
     }
-    if (retry)
+    const entries = Object.entries(pending);
+    if (retry && entries.length <= 1)
       throw new ProviderError(
         502,
         "这批判断仍未完整返回。已完成的消息会保留，请重试未完成部分。",
       );
-    // Retry only this failed batch once. Never discard already completed batches.
-    // Serial recovery keeps total concurrency bounded, even after truncation.
-    const entries = Object.entries(pending),
-      middle = Math.ceil(entries.length / 2);
+    // 只把失败的那几条拆半重发，一次拆不开就继续拆，直到单条。
+    // 单条请求几乎不会同时出错，某一条答歪了不该把整批判断一起判死。
+    // 串行恢复，避免重试把并发又顶上去。
+    const middle = Math.ceil(entries.length / 2);
     for (const subset of [
       entries.slice(0, middle),
       entries.slice(middle),
@@ -387,8 +389,10 @@ export async function evaluateLlm(
       if (batch) await run(batch);
     }
   }
+  // 判全部意味着几十个批次，两个并发要等几分钟。六条线一起走，云端撑得住。
+  const LANES = 6;
   try {
-    await Promise.all([worker(), worker()]);
+    await Promise.all(Array.from({ length: LANES }, () => worker()));
   } catch (e) {
     local.abort();
     throw e;

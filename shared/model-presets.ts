@@ -5,7 +5,8 @@ export const MODEL_PRESETS = [
     name: "DeepSeek",
     protocol: "openai",
     baseUrl: "https://api.deepseek.com/v1",
-    model: "deepseek-flash",
+    // 官方稳定入口，具体版本由 DeepSeek 侧路由。判断和输出模型都能用。
+    model: "deepseek-chat",
     keyUrl: "https://platform.deepseek.com/api_keys",
   },
   {
@@ -18,7 +19,7 @@ export const MODEL_PRESETS = [
   },
   {
     id: "ollama",
-    name: "Ollama · 本机（判断）",
+    name: "Ollama · 本机",
     protocol: "openai",
     baseUrl: "http://127.0.0.1:11434/v1",
     model: "qwen3:8b",
@@ -152,34 +153,10 @@ export const MODEL_PRESETS = [
     model: "jev-1.13-free",
     keyUrl: "https://opencode.ai/auth",
   },
-  {
-    id: "laya",
-    name: "Laya · 本地判断模型",
-    protocol: "local",
-    baseUrl: "http://127.0.0.1:8421",
-    model: "convaiinnovations/laya-multilingual",
-    keyUrl: "",
-  },
-  {
-    id: "anyjev",
-    name: "AnyJev · 本地 LLM 标定",
-    protocol: "local",
-    baseUrl: "http://127.0.0.1:8421",
-    model: "qwen3:8b",
-    keyUrl: "",
-  },
-  {
-    id: "local-server",
-    name: "本机判断服务（System One 兼容）",
-    protocol: "local",
-    baseUrl: "http://127.0.0.1:8421",
-    model: "local-decision-engine",
-    keyUrl: "",
-  },
 ] as const;
 export type ModelSettings = {
   preset: string;
-  protocol: "openai" | "anthropic" | "jev" | "decisions" | "systemone" | "local";
+  protocol: "openai" | "anthropic" | "jev" | "decisions" | "systemone";
   baseUrl: string;
   model: string;
   apiKey: string;

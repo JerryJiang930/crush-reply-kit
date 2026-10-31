@@ -4,7 +4,7 @@
 // Everything rendered here comes from a single SessionReport returned by
 // POST /api/pipeline. The terminal renderer (server/report.ts) draws the same
 // object; neither is the other's upstream.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ModelSettings } from "./ModelSettings";
 import { parseChat, toMessages } from "../shared/parser";
 import {
@@ -52,7 +52,7 @@ type PeerRow = {
   profile?: { age?: string; role?: string; note?: string; relationNote?: string };
 };
 
-const LS = "replysmith.workspace";
+const LS = "crush-reply-kit.workspace";
 
 function loadSaved(): Record<string, string> {
   try {
@@ -78,7 +78,12 @@ function when(ms: number): string {
  * 免得"认识一段时间的朋友"被当成 crush 去算好感度。
  */
 function guessRelation(text: string): Relation {
-  const t = text.trim();
+  // 否定说法要先剥掉再匹配。「不暧昧」里含「暧昧」，直接匹配会把
+  // 「认识一段时间的朋友，不暧昧」读成暧昧，基准就整条歪掉。
+  const t = text
+    .trim()
+    .replace(/(不|没|没有|不是|谈不上|并非|从不|未)\s*(暧昧|喜欢|心动|暗恋|追)/g, "")
+    .replace(/(没|没有|不是|不|未)\s*(在一起|处对象|对象|情侣|恋人)/g, "");
   if (/在一起|对象|男友|女友|男朋友|女朋友|恋爱|老公|老婆|处着/.test(t)) return "couple";
   if (/喜欢|暗恋|暧昧|追|心动|crush/i.test(t)) return "crush";
   return "new";
@@ -153,17 +158,38 @@ function LineRow({ report, index }: { report: SessionReport; index: number }) {
   );
 }
 
-function ReportView({ report }: { report: SessionReport }) {
-  const [expanded, setExpanded] = useState(false);
+function ReportView({
+  report,
+  relationNote,
+}: {
+  report: SessionReport;
+  relationNote: string;
+}) {
   const [picked, setPicked] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
+  const scroll = useRef<HTMLDivElement>(null);
   const o = report.overview;
-  const shown = expanded ? report.messages : report.messages.slice(-12);
+
+  // 对话默认停在最新那句。往上滑才看更早的，这跟微信本身一样。
+  // 首帧之后图片/字体可能还会把高度撑开一截，所以钉完再补一拍，确保真到底。
+  useLayoutEffect(() => {
+    const el = scroll.current;
+    if (!el) return;
+    const toBottom = () => {
+      el.scrollTop = el.scrollHeight;
+    };
+    toBottom();
+    const raf = requestAnimationFrame(toBottom);
+    const t = setTimeout(toBottom, 120);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(t);
+    };
+  }, [report]);
 
   useEffect(() => {
     setPicked(null);
     setCopied(false);
-    setExpanded(false);
   }, [report]);
 
   const copy = useCallback(async (c: Candidate) => {
@@ -190,111 +216,119 @@ function ReportView({ report }: { report: SessionReport }) {
 
   return (
     <div className="ws-report">
-      <div className="ws-head">
-        <h2>{report.peer}</h2>
-        <span className="ws-rel">{RELATIONS[report.relation]}</span>
-      </div>
-
-      <div className="ws-score">
-        <span className="ws-big">{affinity ?? "—"}</span>
-        <div>
-          <div className="ws-score-label">{affinityLabel(affinity)}</div>
-          <div className="ws-muted">
-            {o.stage === "unknown" ? "阶段不明" : (STAGES[o.stage] ?? "阶段不明")} · 把握
-            {statusLabel(o.affinity)}
-            {o.boundaryApplied ? " · 对方已划边界" : ""}
-          </div>
-        </div>
-      </div>
-
-      {o.affinityDimensions && o.affinityDimensions.length > 0 && (
-        <div className="ws-dims">
-          {o.affinityDimensions.map((d) => (
-            <div className="ws-dim" key={d.label}>
-              <span className="ws-dim-label">{d.label}</span>
-              <div className="ws-bar">
-                <div style={{ width: `${Math.max(0, Math.min(100, d.judgment.value ?? 0))}%` }} />
-              </div>
-              <span className="ws-dim-value">
-                {d.judgment.value === null ? "缺证据" : d.judgment.value}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="ws-action">
-        <span className="ws-kicker">下一步</span>
-        <strong>{action.label}</strong>
-        <span className="ws-muted">{action.detail}</span>
-        {o.alternative && ACTIONS[o.alternative] && (
-          <span className="ws-muted">另一条路：{ACTIONS[o.alternative].label}</span>
-        )}
-        {report.candidates[0] && report.candidates[0].action !== o.action && (
+      <section className="ws-chat">
+        <header className="ws-chat-bar">
+          <span>{report.peer}</span>
           <span className="ws-muted">
-            它真正想做的更保守，但证据不够，下面三条是能试着接的方向。
+            电脑端导出，中间可能有没同步或已删除的消息，不是连续对话
           </span>
-        )}
-      </div>
-
-      <section className="ws-candidates">
-        <h3>可发的方向</h3>
-        <div className="ws-cards">
-          {report.candidates.map((c, i) => (
-            <button
-              key={`${c.action}-${i}`}
-              className={`ws-card ${picked === i ? "picked" : ""} ${c.text ? "" : "silent"}`}
-              onClick={() => setPicked(i)}
-            >
-              <span className="ws-card-top">
-                <span className="ws-card-label">
-                  {i + 1}. {c.label}
-                </span>
-                <span className={`ws-badge ${c.source}`}>
-                  {c.source === "primary" ? "主推" : c.source === "alternative" ? "备选" : "收一档"}
-                </span>
-              </span>
-              <span className="ws-card-detail">{c.detail}</span>
-              <span className="ws-card-text">
-                {c.text ?? (c.action === "wait" || c.action === "respect" ? "这个方向先不发" : "—")}
-              </span>
-            </button>
+        </header>
+        <div className="ws-chat-scroll" ref={scroll}>
+          {report.messages.map((m, i) => (
+            <LineRow key={m.id} report={report} index={i} />
           ))}
+          <p className="ws-chat-end">以上是最近 {report.messages.length} 条</p>
         </div>
-        {picked !== null && (
-          <div className="ws-send">
-            <button
-              className="primary"
-              disabled={!report.candidates[picked]?.text}
-              onClick={() => void copy(report.candidates[picked])}
-            >
-              {copied ? "已复制，去粘到微信" : "复制这条"}
-            </button>
-            <button className="ghost" disabled title="下一步接：架空微信输入框直接发">
-              直接发送（待接入）
-            </button>
+      </section>
+
+      <aside className="ws-meta">
+        <div className="ws-head">
+          <h2>{report.peer}</h2>
+          <span className="ws-rel">
+            {relationNote.trim() || RELATIONS[report.relation]}
+          </span>
+        </div>
+
+        <div className="ws-score">
+          <span className="ws-big">{affinity ?? "—"}</span>
+          <div>
+            <div className="ws-score-label">{affinityLabel(affinity)}</div>
+            <div className="ws-muted">
+              {o.stage === "unknown" ? "阶段不明" : (STAGES[o.stage] ?? "阶段不明")} ·
+              把握{statusLabel(o.affinity)}
+              {o.boundaryApplied ? " · 对方已划边界" : ""}
+            </div>
+          </div>
+        </div>
+
+        {o.affinityDimensions && o.affinityDimensions.length > 0 && (
+          <div className="ws-dims">
+            {o.affinityDimensions.map((d) => (
+              <div className="ws-dim" key={d.label}>
+                <span className="ws-dim-label">{d.label}</span>
+                <div className="ws-bar">
+                  <div
+                    style={{
+                      width: `${Math.max(0, Math.min(100, d.judgment.value ?? 0))}%`,
+                    }}
+                  />
+                </div>
+                <span className="ws-dim-value">
+                  {d.judgment.value === null ? "缺证据" : d.judgment.value}
+                </span>
+              </div>
+            ))}
           </div>
         )}
-      </section>
 
-      <section className="ws-lines">
-        <h3>
-          逐句
-          <span className="ws-muted" style={{ fontWeight: 400, marginLeft: 8 }}>
-            电脑端导出的记录，中间可能有没同步或已删除的消息，不是连续对话
-          </span>
-          {report.messages.length > 12 && (
-            <button className="link" onClick={() => setExpanded(!expanded)}>
-              {expanded ? "只看最近" : `展开全部 ${report.messages.length} 条`}
-            </button>
+        <div className="ws-action">
+          <span className="ws-kicker">下一步</span>
+          <strong>{action.label}</strong>
+          <span className="ws-muted">{action.detail}</span>
+          {o.alternative && ACTIONS[o.alternative] && (
+            <span className="ws-muted">另一条路：{ACTIONS[o.alternative].label}</span>
           )}
-        </h3>
-        <ul>
-          {shown.map((m) => (
-            <LineRow key={m.id} report={report} index={report.messages.indexOf(m)} />
-          ))}
-        </ul>
-      </section>
+          {report.candidates[0] && report.candidates[0].action !== o.action && (
+            <span className="ws-muted">
+              它真正想做的更保守，但证据不够，下面三条是能试着接的方向。
+            </span>
+          )}
+        </div>
+
+        <section className="ws-candidates">
+          <h3>可发的方向</h3>
+          <div className="ws-cards">
+            {report.candidates.map((c, i) => (
+              <button
+                key={`${c.action}-${i}`}
+                className={`ws-card ${picked === i ? "picked" : ""} ${c.text ? "" : "silent"}`}
+                onClick={() => setPicked(i)}
+              >
+                <span className="ws-card-top">
+                  <span className="ws-card-label">
+                    {i + 1}. {c.label}
+                  </span>
+                  <span className={`ws-badge ${c.source}`}>
+                    {c.source === "primary"
+                      ? "主推"
+                      : c.source === "alternative"
+                        ? "备选"
+                        : "收一档"}
+                  </span>
+                </span>
+                <span className="ws-card-detail">{c.detail}</span>
+                <span className="ws-card-text">
+                  {c.text ??
+                    (c.action === "wait" || c.action === "respect"
+                      ? "这个方向先不发"
+                      : "—")}
+                </span>
+              </button>
+            ))}
+          </div>
+          {picked !== null && (
+            <div className="ws-send">
+              <button
+                className="primary"
+                disabled={!report.candidates[picked]?.text}
+                onClick={() => void copy(report.candidates[picked])}
+              >
+                {copied ? "已复制，去粘到微信" : "复制这条"}
+              </button>
+            </div>
+          )}
+        </section>
+      </aside>
     </div>
   );
 }
@@ -415,7 +449,7 @@ export default function Workspace() {
     Boolean((saved.relationNote ?? "").trim()),
   );
   const [sourceOpen, setSourceOpen] = useState(false);
-  const [relation, setRelation] = useState<Relation>("crush");
+  const [relation, setRelation] = useState<Relation>("new");
   const [mode, setMode] = useState<"baseline" | "update">("baseline");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -426,6 +460,28 @@ export default function Workspace() {
   const [modelConfig, setModelConfig] = useState<PublicSettings | null>(null);
   const [draftOpen, setDraftOpen] = useState(false);
   const [draft, setDraft] = useState<DraftView | null>(null);
+
+  // 顶上那两个按钮要写清现在用的是哪个模型。以前只有点开面板才去读配置，
+  // 刷新之后就成了光秃秃的「判断模型」「起草模型」，看不出在用什么。
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const [judge, chat] = await Promise.all([
+          fetch("/api/settings").then((r) => (r.ok ? r.json() : null)),
+          fetch("/api/chat-settings").then((r) => (r.ok ? r.json() : null)),
+        ]);
+        if (!alive) return;
+        if (judge) setModelConfig(judge);
+        if (chat) setDraft(chat);
+      } catch {
+        /* 读不到就只显示按钮名，不影响使用 */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     localStorage.setItem(
@@ -474,18 +530,45 @@ export default function Workspace() {
     void loadPeers();
   }, [loadPeers]);
 
+  // 刷新和重开页面不该等于从头来：把上次那份报告读回来。
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch("/api/last-report");
+        if (!res.ok) return;
+        const saved = (await res.json()) as {
+          relation?: string;
+          reports: SessionReport[];
+        };
+        if (!saved.reports?.length) return;
+        setReports(saved.reports);
+        setActive(0);
+        setPeer(saved.reports[0].peerId ?? "");
+        if (saved.relation) setRelation(saved.relation as Relation);
+      } catch {
+        /* 没有也正常，页面照旧停在空态 */
+      }
+    })();
+  }, []);
+
   function pickPeer(p: PeerRow) {
     setPeer(p.peer);
     setAge(p.profile?.age ?? "");
     setRole(p.profile?.role ?? "");
     setNote(p.profile?.note ?? "");
-    setRelationNote(p.profile?.relationNote ?? "");
-    setCustomRelation(Boolean((p.profile?.relationNote ?? "").trim()));
+    const note = p.profile?.relationNote ?? "";
+    setRelationNote(note);
+    setCustomRelation(Boolean(note.trim()));
+    // 已经填过关系基准的人，点进来就用他写的那句话定判断基准，
+    // 而不是停留在默认的"刚认识"。没填过的留给下拉自己选。
+    if (note.trim()) setRelation(guessRelation(note));
     // 第一次点这个人就问一句「对方是谁」——这些聊天记录里读不出来。
     if (!p.profile) setProfileOpen(true);
   }
 
   async function saveProfile() {
+    // 关系基准跟着这句话走：写"认识一段时间的朋友"，判断就不该按暧昧算。
+    setRelation(guessRelation(relationNote));
     try {
       await fetch("/api/peers/profile", {
         method: "POST",
@@ -563,8 +646,7 @@ export default function Workspace() {
         relation,
         mode,
         profile: { age, role, note, relationNote },
-        lineWindow: 12,
-        messageWindow: 0,
+        // 不传，让服务端按模型自己定：判多少跟展示多少对齐。
       });
       setReports(data.reports);
       setActive(0);
@@ -581,8 +663,8 @@ export default function Workspace() {
   return (
     <div className="ws">
       <header className="ws-top">
-        <strong>replysmith</strong>
-        <span className="ws-muted">读你的聊天，判断关系，给几个方向</span>
+        <strong>Crush Reply Kit</strong>
+        <span className="ws-muted">读你和 crush 的聊天，判断关系，给几个方向</span>
         <div className="ws-top-actions">
           <button className="ghost" onClick={() => void openDraft()}>
             起草模型{draft?.current ? ` · ${draft.current.model}` : ""}
@@ -708,11 +790,6 @@ export default function Workspace() {
                   placeholder="比如：认识一段时间的朋友，不暧昧"
                 />
               )}
-              {customRelation && (
-                <p className="ws-hint">
-                  判断基准按「{RELATIONS[relation]}」，这句话原样进提示词。
-                </p>
-              )}
             </label>
             <div className="ws-profile">
               <span className="ws-kicker">对方是谁</span>
@@ -737,6 +814,9 @@ export default function Workspace() {
               {mode === "baseline"
                 ? "读完整历史，第一次接一个人用这个。"
                 : "只读上次之后的新消息，接着之前的判断往下走。"}
+            </p>
+            <p className="ws-hint ws-remind">
+              跟对方聊过之后回来点「更新」，分析才会跟上新消息。不点就一直看的是上次那份。
             </p>
             <p className="ws-hint ws-sync">
               电脑端只存这台机器上收发过的记录。先在手机微信里
@@ -770,7 +850,7 @@ export default function Workspace() {
               </p>
             </div>
           )}
-          {report && <ReportView report={report} />}
+          {report && <ReportView report={report} relationNote={relationNote} />}
         </main>
       </div>
 
@@ -821,6 +901,7 @@ export default function Workspace() {
         <div className="ws-overlay" onClick={() => setModelOpen(false)}>
           <div className="ws-modal" onClick={(e) => e.stopPropagation()}>
             <h3>判断模型（THINK）</h3>
+            <p className="ws-muted">判定按 JEV 调过，换成别的判断类模型可能不准；输出模型可随意切换。</p>
             {modelConfig ? (
               <ModelSettings
                 initial={modelConfig}
@@ -840,6 +921,7 @@ export default function Workspace() {
         <div className="ws-overlay" onClick={() => setDraftOpen(false)}>
           <div className="ws-modal" onClick={(e) => e.stopPropagation()}>
             <h3>起草模型（OUT）</h3>
+            <p className="ws-muted">输出模型只负责把判读翻成句子，可随意切换（DeepSeek 等）。</p>
             {draft ? (
               <DraftSettings view={draft} onSaved={setDraft} onClose={() => setDraftOpen(false)} />
             ) : (

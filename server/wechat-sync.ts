@@ -36,8 +36,7 @@ export function readSyncConfig(): SyncConfig {
     toolDir:
       process.env.WECHAT_TOOL_DIR || "C:/Users/jerry/wechat-4x-decrypt-main/wcdb-key-tool-main",
     python:
-      process.env.WECHAT_PYTHON ||
-      "C:/Users/jerry/.workbuddy/binaries/python/versions/3.13.12/python.exe",
+      process.env.WECHAT_PYTHON || "python",
     dbDir,
   };
 }

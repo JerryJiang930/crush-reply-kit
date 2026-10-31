@@ -1,236 +1,190 @@
-# replysmith
+# Crush Reply Kit
 
-读本机的聊天记录，判断现在该往哪走，然后写一句能直接发出去的话。三步都在本机跑，聊天内容不外传。
+读本机微信聊天记录，判断关系，给出几个可以发出去的回复方向。本地服务，浏览器打开即用。
 
-## 三段链路
+它不负责让你脱单，只负责在你盯着输入框删了打、打了删的时候，递过来几个句子。
 
-```
-IN      把聊天记录读进来                shared/sources.ts
-THINK   判断关系走向和每句话的状态       server/analysis.ts + 本地判断模型
-OUT     给几条不同方向的回复，挑一条     server/candidates.ts · server/deliver.ts
-```
+![node](https://img.shields.io/badge/node-22.12%2B-5fa04e?logo=node.js&logoColor=white)
+![platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078d6?logo=windows&logoColor=white)
+![license](https://img.shields.io/badge/license-MIT-8f5670)
 
-**IN** 有两个来源。一个是 JSON 文件（`examples/sample-sessions.json`，不依赖任何外部工具）；另一个是解密之后的微信数据库。
+![主界面：中间是聊天记录，右侧是好感度和可发的方向](docs/images/screenshot.png)
 
-**THINK** 是这个工具的主体，它跑两轮题。第一轮看整体：五个维度各自打分，加权成好感度，判断关系走到哪一步，决定下一步该主动还是该等，同时留下它考虑过的另一条路。第二轮看逐句：对方每句话的情绪分布和意图分布，你自己每句话的表达质量，从 SSS 到 D 分档。两轮都是概率输出。
+分析结果来自模型对文字的判读，读不到聊天之外的现实，对方回得慢可能只是忙。只当参考。
 
-**OUT** 按判断结果分几个方向各写一句。方向从主推动作、它权衡过的备选、以及退一步的动作里取，最多三条。方向和理由不依赖聊天模型，只有句子需要。
+## 能做什么
 
-## 最后一步怎么落地
+连上本机微信，左栏列出所有联系人。选一个人，填对方是谁：年龄、身份，以及你们现在什么关系。关系那栏写一句话，比如「同事，不暧昧」，它按这句话当打分基准，也用它推出关系档位。
 
-网页里出三张卡片，点一张，按「复制这条」，然后切回微信粘上去。
+跑完一次给三样东西：
 
-自动发送（接管微信输入框，点一下就发出去）还没做。它跟客户端版本绑得紧，微信升级一次就得跟着改；更要紧的是它会省掉人过目那一秒。接口留好了，回头接。
+1. 关系读数。好感度（六维加权出来的分数，点开看细项）、阶段、下一步该主动还是该等，以及它权衡过的另一个动作。
+2. 逐句读数。对方每句话的情绪和意图分布，你自己每句话的表达质量评分。对话流默认停在最新一句，往上滑看更早的。
+3. 几个回复方向，每个方向一句。默认三个：判定的动作、它权衡过的另一条路、按规则退一档的方向。选中一条进剪贴板。
 
-## 网页就是全部
+回复方向有几条硬规矩：
 
-左边选数据源，右边看判断和候选。三段都在这一页里：
+- 判定为「等」或「尊重边界」时不写句子，这时候正确的做法就是先别发。
+- 判定没把握时拿「顺着聊」当基准，照样给三个能发的方向。
+- 明确划了边界、且判断清晰时只给一条「尊重边界」，不给菜单。
+- 写句子只走线上：一到两句、40 字以内，不提见面吃饭看电影，不解释为什么这么回。
+- 好感度、氛围、对方最近几句的情绪和意图会一起喂给写句子的模型，让它不只靠猜语气。
+- 历史超出窗口的部分先压成摘要再给模型，不是从头截断。
 
-1. **IN**：左栏「微信库」填解密目录、映射文件、分析对象；或者切「粘贴」直接贴一段记录。
-2. **THINK**：点「开始」，服务器跑完整判断，不是逐句发请求。好感度五维、阶段、下一步、逐句情绪和意图一次返回。
-3. **OUT**：三张候选卡片，主推排第一，点一张复制。
+跟对方又聊过之后点更新，只分析游标之后的新消息，算过的不重算。每个人单独存一份设定、游标和更早历史的摘要，换个人互不影响。
 
-第一次接一个人用「建立基线」，它读完整历史，游标存进 `.runtime/peers/`。之后用「更新」，只读上次之后的新消息。
+## 架构
 
-两个模型各有自己的设置入口，在右上角。都不写死：判断模型填哪个地址都行，起草模型从预设里选或者自己填，接云端 API 也是同一张表单。
+三段：IN 取数据，THINK 判断，OUT 起草。`server/pipeline.ts` 是唯一知道三段都存在的模块，每段都藏在接口后面可以替换。
 
-## 开始之前
+### IN 取数据
 
-- **Node 22.12 或更高**。读微信数据库用 Node 自带的 `node:sqlite`，不额外装依赖。
-- **判断模型**（必需）。任何说 System One 协议的服务都行，默认按 Laya 配在 `127.0.0.1:8421`。
-- **聊天模型**（可选）。任何 OpenAI 兼容接口，默认按本机 Ollama 的 `qwen3:8b` 配在 `127.0.0.1:11434`。
+`shared/sources.ts` 定义 `SourceAdapter`，产出 `NormalizedSession`（稳定 peerId、显示名、Message 数组）。Message 用的就是 crush-monitor 的形状，换数据源不需要动下游。
 
-两个模型都能换成别家，改环境变量即可，代码不用动。
+三个实现：
 
-## 跑起来
-
-```bash
-npm install
-npm run build      # 第一次，或改了前端之后
-npm run up
-```
-
-`npm run up` 做三件事：探一下 8421 和 11434 通不通；缺哪个起哪个，已经开着的直接复用；起网页并打开 `http://127.0.0.1:3178`。Ctrl+C 一起收，只关这次自己起的进程。
-
-只想起网页（模型已经在别处跑着）：
-
-```bash
-npm start
-```
-
-改前端时用 `npm run dev`，5178 带热更新。
-
-## 配置
-
-默认值都在代码里，一项不配也能跑。想改有三个地方，后面的覆盖前面的：
-
-1. 代码里的默认值
-2. `.env`（照 `.env.example` 抄一份）
-3. 命令行环境变量
-
-### IN：聊天记录从哪来
-
-网页里左栏填的那三个字段就是全部输入，下面这些是给 `scripts/run.ts`（无界面那条路）用的。
-
-| 变量 | 默认 | 说明 |
-| --- | --- | --- |
-| `SOURCE` | `manual` | `manual` 读 JSON，`wechat` 读解密后的数据库 |
-| `SESSIONS_FILE` | `examples/sample-sessions.json` | `manual` 模式下的输入文件 |
-| `WECHAT_DB_DIR` | 无 | `wechat` 模式下必填，指向 `wechat-decrypt` 的 `decrypted/` 目录 |
-| `WECHAT_MAPPING` | `.runtime/wechat-mapping.json` | 表名和字段名的映射文件 |
-| `ALLOWED_PEERS` | 无 | `wechat` 模式下必填，逗号分隔。不填会直接拒绝启动 |
-| `SINCE_MS` | `0` | 只处理这个时间点之后有新消息的会话（epoch 毫秒） |
-| `RELATION` | `crush` | `crush` / `new` / `couple`，影响判断时的基准 |
-
-### THINK：判断模型
-
-| 变量 | 默认 | 说明 |
-| --- | --- | --- |
-| `LOCAL_ENDPOINT` | `http://127.0.0.1:8421` | 判断服务的地址 |
-| `LOCAL_PORT` | `8421` | 启动器监听的端口；设了 `LOCAL_ENDPOINT` 就按后者走 |
-| `LOCAL_MODEL` | `convaiinnovations/laya-multilingual` | 模型名，服务端按这个名字路由 |
-| `LOCAL_DIALECT` | `systemone` | 协议方言：`systemone` / `anyjev` |
-| `LOCAL_API_KEY` | `local` | 本机服务通常不看，但有些客户端要求非空 |
-| `LINE_WINDOW` | `12` | 逐句判断看最近多少条消息。设 `0` 只出整体判断，速度最快 |
-
-### OUT：聊天模型
-
-预设只提供 baseUrl 和 model 的默认值，剩下每个字段都能单独覆盖。
-
-| `DRAFT_PRESET` | 地址 | 默认模型 |
-| --- | --- | --- |
-| `ollama` | `http://127.0.0.1:11434/v1` | `qwen3:8b` |
-| `lmstudio` | `http://127.0.0.1:1234/v1` | 需自己填 |
-| `vllm` | `http://127.0.0.1:8000/v1` | 需自己填 |
-| `deepseek` | `https://api.deepseek.com/v1` | `deepseek-chat` |
-| `dashscope` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen3-8b` |
-| `siliconflow` | `https://api.siliconflow.cn/v1` | `Qwen/Qwen3-8B` |
-| `openai` | `https://api.openai.com/v1` | 需自己填 |
-| `custom` | 需自己填 | 需自己填 |
-
-| 变量 | 默认 | 说明 |
-| --- | --- | --- |
-| `DRAFT_ENDPOINT` | 取预设 | 覆盖 baseUrl |
-| `DRAFT_MODEL` | 取预设 | 覆盖模型名 |
-| `DRAFT_API_KEY` | 空 | 只有离开本机才强制要求 |
-| `DRAFT_TEMPERATURE` | `0.7` | |
-| `DRAFT_MAX_TOKENS` | `700` | 思考型模型会把预算花在草稿上，上限要留出余地 |
-| `DRAFT_TIMEOUT_MS` | `60000` | |
-| `DRAFT_WIRE` | 取预设 | `openai` 或 `ollama`。Ollama 的兼容路由会忽略 `think:false`，本地跑思考模型必须走 `ollama` 这条原生路由 |
-| `CHAT_CONFIG_PATH` | `.runtime/chat.json` | 也可以用 JSON 文件代替环境变量，逐字段合并，环境变量优先 |
-| `DRAFT_CANDIDATES` | `3` | 出几个方向的候选。每多一个方向就多一次聊天模型调用 |
-
-换供应商只改 `DRAFT_PRESET`，代码不用碰。
-
-### 交付
-
-| 变量 | 默认 | 说明 |
-| --- | --- | --- |
-| `DELIVER_MODE` | `print` | `print` 只打印，`clipboard` 写进剪贴板 |
-
-### 启动器专用
-
-`npm run up` 需要知道权重和可执行文件在哪。
-
-| 变量 | 默认 | 说明 |
-| --- | --- | --- |
-| `LAYA_PYTHON` | `../.venv-laya/Scripts/python.exe` | 装 Laya 的虚拟环境 |
-| `LAYA_SNAPSHOT` | 自动找 HF 缓存 | 本地权重快照目录，设了就完全不联网 |
-| `OLLAMA_BIN` | `~/.local/ollama/bin/ollama.exe` | |
-| `CHAT_PORT` | `11434` | 启动器监听的聊天服务端口 |
-
-## 微信记录怎么进来
-
-这部分需要你本人坐在这台电脑前操作，AI 替不了。
-
-先说明一件事：这个仓库只读 `wechat-decrypt` 的**输出**，不参与提取密钥和解密。请只处理你自己已获得同意的会话。
-
-1. 微信 PC 端保持登录，用管理员权限跑 [wechat-decrypt](https://github.com/328336690/wechat-decrypt) 的 `find_all_keys.py` 和 `decrypt_db.py`，得到一个 `decrypted/` 目录。
-
-2. 探一下库结构，确认表名和字段能被识别：
-
-```bash
-npm run inspect -- --dir="D:/path/to/wechat-decrypt/decrypted"
-```
-
-它会列出所有表，自动认出消息表和联系人表，打印前几行。字段名跟你这版微信对不上的话，加 `--write` 生成一份映射骨架，再手工改：
-
-```bash
-npm run inspect -- --dir="D:/path/to/wechat-decrypt/decrypted" --write
-```
-
-3. 填好允许处理的会话名单，然后跑：
-
-```bash
-SOURCE=wechat \
-WECHAT_DB_DIR="D:/path/to/wechat-decrypt/decrypted" \
-ALLOWED_PEERS="小满" \
-DELIVER_MODE=clipboard \
-npm run run
-```
-
-`ALLOWED_PEERS` 为空时程序拒绝启动，这条是故意的。
-
-## 命令
-
-| 命令 | 作用 |
+| 实现 | 读什么 |
 | --- | --- |
-| `npm run up` | 起模型 + 起网页，Ctrl+C 全收 |
-| `npm start` | 只起网页（3178），假定模型已在跑 |
-| `npm run dev` | 开发网页，5178 热更新 |
-| `npm run build` | 类型检查 + 打包前端 |
-| `npm run inspect -- --dir=…` | 探测微信库结构 |
-| `npm test` | 跑测试 |
-| `npm run typecheck` | 类型检查 |
+| wechat | 解密后的本地库，`shared/wechat-db.ts` |
+| manual | 一个 JSON 文件，开发和测试用 |
+| inline | 前端直接把消息传进来 |
 
-`scripts/run.ts` 和 `server/report.ts` 还在，是不带界面的批处理与终端渲染，`npx tsx scripts/run.ts` 直接用。它们和网页读同一个 `SessionReport`，不是另一条产品线。
+解密不在本项目里做。`server/wechat-sync.ts` 调外部工具 wcdb-key-tool，密钥每次从微信进程内存取，所以微信要开着并登录着。工具来源见「外部依赖」一节。
+
+读微信必须指定分析对象，白名单为空一律拒绝。
+
+### THINK 判断
+
+沿用 crush-monitor 的 `analyze()`。两类任务：
+
+1. `overviewJob` 出整段的关系读数。好感度是六维加权（主动延续、回应投入、关心体贴、自我开放、亲密表达、实际行动），外加阶段、下一步动作，以及它权衡过的另一个动作。
+2. `incrementalJobs` 出逐句读数。对方每句的情绪和意图分布，自己每句的表达质量评分。
+
+逐句判定有窗口，上限 60 条；前端不传时跟展示窗口对齐。
+
+判定骨架在 `shared/` 下（`types.ts`、`rules.ts`、`affinity.ts`、`action.ts`、`intents.ts`、`labels.ts`、`memory.ts`、`ratings.ts`、`incremental.ts` 等），原样沿用 crush-monitor，按 JEV 调过。阈值和权重本项目没动。
+
+### OUT 起草
+
+`server/candidates.ts` 的 `draftCandidates()` 把判读变成几个方向，每个方向一句。
+
+更早的历史超出起草窗口时，`server/summarize.ts` 先压成摘要再给模型，避免从前面被截断。
+
+输出模型独立配置，OpenAI 兼容任意一家。
+
+### 两个模型分开配
+
+|  | 判断模型（THINK） | 输出模型（OUT） |
+| --- | --- | --- |
+| 接口 | `/api/settings` | `/api/chat-settings` |
+| 配置落在 | `.runtime/model.json` | `.runtime/chat.json` |
+| 默认 | JEV | DeepSeek |
+
+两个接口就是这两份配置的读写口子，网页右上角选好模型、填完 Key 提交即可，立刻生效，不用重启。
+
+判断侧默认 JEV，因为判定骨架是按它的输出分布校的。换别的判断模型能跑，分数和动作的可靠性会降。输出侧只负责把判读翻成句子，没有调过任何东西，随便换。
+
+### 多人，每人一份存档
+
+`/api/peers` 列出库里的联系人。每个联系人一个文件 `.runtime/peers/<peerId>.json`，存两件事：上次读到哪条消息（游标），以及对方是谁（年龄、身份、关系原话）。更早历史的摘要单独存 `<peerId>.summary.json`，清游标不会连带丢掉摘要。
+
+`/api/pipeline` 有 baseline 和 update 两种模式。第一次跑 baseline 读全量，之后 update 只拉游标之后的新消息，跑完推进游标。一次请求分析一个人。
+
+### 前端
+
+`src/Workspace.tsx` 单页面，三栏：左栏联系人，中间对话流（默认停在最新一句，往上滑看更早），右栏判读和回复方向。
+
+选中的方向写到剪贴板。
+
+## 与 crush-monitor 的关系
+
+基于 [crush-monitor](https://github.com/FerryCorleone/crush-monitor)（MIT）开发，在它的判定骨架上长出来，按开源社区的叫法是它的衍生作品。原项目 README 有一节「社区作品」专门收录这类二次开发的版本。
+
+沿用的部分：crush-monitor 的判定骨架（好感度六维、阶段、动作那套判定逻辑）、模型协议栈，以及前端模型设置弹窗。判定骨架按 JEV 的输出分布校过，本项目没动阈值和权重。
+
+新增的部分：IN 段的微信数据源与解密接线、双模型里的 OUT 起草与候选生成、每人一份的多人存档，以及整个前端界面。
+
+改动过的一处：`server/analysis.ts` 里关系基准用填写的原话，不再套枚举预设。
+
+## 外部依赖
+
+解密和判定都来自外部项目，三个都是 MIT。
+
+| 项目 | 用在哪 | 来源 |
+| --- | --- | --- |
+| crush-monitor | 判定骨架、模型协议栈 | [FerryCorleone/crush-monitor](https://github.com/FerryCorleone/crush-monitor) |
+| wcdb-key-tool | 从微信 4.1+ 进程内存取密钥 | [TANGandXUE/wcdb-key-tool](https://github.com/TANGandXUE/wcdb-key-tool)，版权 CloudDreamAI / TANGandXUE |
+| wechat-4x-decrypt | 解密与检索的封装，wcdb-key-tool 在它里面 | [xscanzm/wechat-4x-decrypt](https://github.com/xscanzm/wechat-4x-decrypt)，MIT，版权周一（皮皮未来 / Pipi Future） |
+
+微信 4.1 起进程内存里不再有明文密钥，靠扫 `x'hex'` 的老工具全部失效，所以只能用 wcdb-key-tool 这套。它只做解密，不参与判断。
+
+工具目录和 Python 解释器路径写在 `server/wechat-sync.ts` 顶部，换机器要改，也能用环境变量 `WECHAT_TOOL_DIR` 和 `WECHAT_PYTHON` 覆盖。
 
 ## 目录
 
 ```
 server/
-  pipeline.ts        IN → THINK → OUT 的编排，唯一知道三段都存在的地方
-  pipeline-api.ts    /api/pipeline：网页那一次调用，含基线游标
-  candidates.ts      从判断结果分出三个方向，各写一句
-  report.ts          把完整判断排成终端报告（可选，给批处理用）
-  local-decision.ts  判断服务的几种协议方言
-  chat-client.ts     聊天补全，两种 HTTP 形状
-  chat-config.ts     聊天模型配置的解析与校验
-  chat-settings-api.ts  /api/chat-settings：起草模型的网页配置
-  deliver.ts         剪贴板和打印（命令行用）
-  index.ts           网页的 /api 路由
-  settings-api.ts    判断模型设置的保存与连接检测
-  analysis.ts        拆题、评分维度、关系规则（上游原版）
-  provider.ts llm.ts model-config.ts liquid.ts openai-decisions.ts  云端协议栈（上游原版）
+  index.ts              路由与启动
+  pipeline.ts           IN → THINK → OUT 编排
+  pipeline-api.ts       /api/pipeline，baseline/update 与游标
+  candidates.ts         判读翻成几个方向
+  summarize.ts          更早历史压成摘要
+  wechat-sync.ts        调外部工具解密
+  peers-api.ts          /api/peers，联系人列表与设定
+  peer-state.ts         每人一份游标、设定、摘要
+  chat-client.ts        聊天补全
+  chat-config.ts        输出模型配置
+  settings-api.ts       判断模型 /api/settings
+  chat-settings-api.ts  输出模型 /api/chat-settings
+  analysis.ts           拆题与评分维度（沿用，关系基准有改动）
+  provider.ts llm.ts model-config.ts liquid.ts openai-decisions.ts  协议栈（沿用）
 shared/
-  sources.ts         IN 的接口与两个实现
-  wechat-db.ts       读解密后的 SQLite
-  chat-presets.ts    聊天模型预设
-  rules.ts affinity.ts incremental.ts intents.ts labels.ts memory.ts ratings.ts types.ts  判断结构（上游原版）
-  parser.ts fixtures.ts model-presets.ts model-selection.ts  网页粘贴那条线用的（上游原版）
+  sources.ts            IN 的接口与三个实现
+  wechat-db.ts          读解密后的库
+  pipeline-types.ts     报告与设定类型
+  chat-presets.ts       输出模型预设
+  types.ts rules.ts affinity.ts action.ts intents.ts labels.ts      判定骨架（沿用）
+  memory.ts ratings.ts incremental.ts parser.ts model-presets.ts    判定骨架（沿用）
 src/
-  Workspace.tsx      唯一页面：数据源、判断、候选
-  App.tsx            上游原版界面，保留可回退，入口已切走
+  Workspace.tsx         唯一页面
+  ModelSettings.tsx     模型配置弹窗（沿用）
 scripts/
-  up.ts              一键启动
-  run.ts             无界面跑一次（可选）
-  start.ts           起网页
-  inspect-wechat-db.ts  探测库结构
+  start.ts              只起服务端
+  inspect-wechat-db.ts  探库结构
+tools/
+  stub-decision-server.ts  测试的替身判断服务，说的是 System One 协议
 tests/
 ```
 
-上面标了「上游原版」的，是从上游继承来的代码，逻辑没改过：六维好感度怎么加权、十选一动作怎么定、对方划定边界时 respect 怎么压住其他动作、好感度不够时 wait 怎么拦住推进行、逐句题目怎么出，全在这些文件里。改过的只有三个：`provider.ts` 加了一个 `engine === "local"` 的分支，`model-config.ts` 加了本地方言的类型和空 Key 处理，`model-presets.ts` 加了三个本地预设。
+## 运行
+
+```bash
+git clone https://github.com/JerryJiang930/crush-reply-kit.git
+cd crush-reply-kit
+npm install
+npm run dev
+```
+
+`npm run dev` 起接口（3178）和网页（5178，带热更新）。只想起服务端用 `npm start`，访问 `http://127.0.0.1:3178`。
+
+| 依赖 | 版本 | 说明 |
+| --- | --- | --- |
+| Node.js | 22.12 以上 | 用到内建 `node:sqlite` |
+| Windows | 10 / 11 | 读微信这条路只在 Windows 上跑过 |
+| 微信 PC | 4.1 以上 | 解密要读它的进程内存，必须开着并登录着 |
+| Python | 3.13 | 只给解密工具用 |
+
+微信那条路在网页左栏点连接，服务端自己解密，明文快照写到 `.runtime/wechat/decrypted`。首次解密会写 `.runtime/wechat/owner.json`，记你的 wxid 和库路径，换账号或换机器要改。
 
 ## 已知限制
 
-- 只处理文本消息。图片、语音、表情包在数据库里有记录但没有可读内容，会被跳过。
-- 两个模型都得自己准备好。仓库不带权重，也不下载权重，启动器只去本地缓存里找。
-- 网页只做到「复制」，直接发送还没接。
-- 逐句判断的质量取决于判断模型本身。Laya 是个三亿参数的小模型，情绪和意图的分布经常很平，一个十二选一的问题最高项只有二成五，这种时候别把百分比当真。
-- 关系判断是概率输出，不是事实。它读不出你们现实里发生的事。
+- 只处理文本。图片、语音、表情在库里有记录但没有可读内容，跳过。
+- 电脑端的库只记录这台机器上收发过的。手机上看过没同步的、对方撤回的、你删掉的都不在里面，对话可能不连续。
+- 判定是概率输出，不是对现实的测量。
+- 两个模型的 Key 明文存在 `.runtime` 下，别分享，别提交到仓库。
 
-## 出处
+## 许可证
 
-`server/analysis.ts` 里的题目设计、评分维度和关系规则来自 [FerryCorleone/crush-monitor](https://github.com/FerryCorleone/crush-monitor)（MIT）。本仓库在它之上把判断模型换成本地服务，加了 IN 和 OUT 两段。
+MIT。判定骨架和解密工具都来自外部 MIT 项目，各自的版权声明随本项目保留，见「外部依赖」一节。本项目与微信、腾讯及 TypeSafe 无隶属关系。
 
-MIT License。
+有问题开 issue，改完发 PR。

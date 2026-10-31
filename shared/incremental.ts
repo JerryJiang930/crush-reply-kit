@@ -1,5 +1,11 @@
 import { boundedContext, relevantEvents, type MemoryEvent } from "./memory";
-import type { Message, Relation, LineResult, AnalysisRequest } from "./types";
+import type {
+  Message,
+  Relation,
+  LineResult,
+  AnalysisRequest,
+  AnalysisProfile,
+} from "./types";
 export function incrementalJobs(
   messages: Message[],
   relation: Relation,
@@ -7,6 +13,7 @@ export function incrementalJobs(
   lines: Record<string, LineResult>,
   events: Record<string, MemoryEvent>,
   changed: boolean,
+  profile?: AnalysisProfile,
 ): AnalysisRequest[] {
   const recentIds = new Set(
     changed
@@ -100,19 +107,22 @@ export function incrementalJobs(
     }
     start = end;
   }
-  return jobs.reverse();
+  const withProfile = profile ? jobs.map((j) => ({ ...j, profile })) : jobs;
+  return withProfile.reverse();
 }
 export function overviewJob(
   messages: Message[],
   relation: Relation,
   revision: number,
   events: Record<string, MemoryEvent>,
+  profile?: AnalysisProfile,
 ): AnalysisRequest {
   return {
     task: "overview",
     targetIds: [],
     revision,
     relation,
+    ...(profile ? { profile } : {}),
     ...boundedContext(
       messages,
       Math.max(0, messages.length - 100),

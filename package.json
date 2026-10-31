@@ -1,5 +1,5 @@
 {
-  "name": "replysmith",
+  "name": "crush-reply-kit",
   "version": "1.5.0",
   "private": true,
   "type": "module",
@@ -7,7 +7,6 @@
     "dev": "concurrently -k -n api,web \"tsx watch server/index.ts\" \"vite --host 127.0.0.1\"",
     "build": "tsc --noEmit && vite build",
     "start": "tsx scripts/start.ts",
-    "up": "tsx scripts/up.ts",
     "inspect": "tsx scripts/inspect-wechat-db.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts"

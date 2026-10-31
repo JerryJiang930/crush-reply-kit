@@ -64,9 +64,10 @@ export const pipelineRequestSchema = z.object({
   relation: z.enum(["crush", "new", "couple"]).default("crush"),
   mode: z.enum(["baseline", "update"]).default("baseline"),
   profile: profileSchema.optional(),
-  lineWindow: z.number().int().min(0).max(200).default(12),
+  lineWindow: z.number().int().min(0).max(4000).default(0),
   draftContext: z.number().int().min(4).max(200).optional(),
-  messageWindow: z.number().int().min(0).max(4000).default(50),
+  // 0 = 展示完整历史（界面内部滚动）。逐句判定窗口跟它对齐，封顶 60。
+  messageWindow: z.number().int().min(0).max(4000).default(0),
 });
 
 export type PipelineRequest = z.infer<typeof pipelineRequestSchema>;
@@ -151,7 +152,7 @@ export async function runPipelineApi(
     sinceMs,
     candidates: 3,
     onDraftError: (peer, action, message) =>
-      console.warn(`[replysmith] ${peer} 的「${action}」没写出来：${message}`),
+      console.warn(`[crush-reply-kit] ${peer} 的「${action}」没写出来：${message}`),
   });
 
   // 推进 WeChat 基线游标：取每个报告里最晚一条消息的时间。

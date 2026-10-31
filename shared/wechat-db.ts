@@ -34,8 +34,15 @@ export type PeerSummary = {
 
 const TEXT = 1;
 
+/**
+ * 只读打开，并且声明这份文件不会再变。
+ *
+ * immutable 让 SQLite 完全不碰 WAL 和共享内存，也就不需要写任何临时文件。
+ * 盘写满的时候，普通只读会在建 -shm 时直接报 disk I/O error，而这里我们只是
+ * 读一份解密产物，本来就该这么开。
+ */
 function open(file: string): DatabaseSync {
-  return new DatabaseSync(file, { readOnly: true });
+  return new DatabaseSync(`file:${file}?immutable=1`, { readOnly: true });
 }
 
 function tableIn(dbFile: string, table: string): boolean {
@@ -165,12 +172,15 @@ export function listWeChatPeers(cfg: WeChatConfig): PeerSummary[] {
   }
 }
 
-/** 一张 Msg 表在哪个消息库里。表散在 message_0..3，得挨个问。 */
-function findTable(dbDir: string, table: string): string | null {
-  for (const file of messageDbs(dbDir)) {
-    if (tableIn(file, table)) return file;
-  }
-  return null;
+/**
+ * 一张 Msg 表在哪些消息库里。这里是全部，不是第一个。
+ *
+ * 微信按库文件对消息分片：同一个人的 Msg_<md5> 表在 message_0、message_1、message_2
+ * 里各有一份，时间区间首尾相接、互不重叠。只看第一个库，读到的是最近那一段，
+ * 更早几年的一句都进不来。
+ */
+function findTables(dbDir: string, table: string): string[] {
+  return messageDbs(dbDir).filter((file) => tableIn(file, table));
 }
 
 type MsgRow = {
@@ -198,7 +208,7 @@ export function readWeChatSessions(
     maxMessagesPerPeer?: number;
   },
 ): NormalizedSession[] {
-  const allow = new Set(cfg.allowedPeers.map((p) => p.trim()).filter(Boolean));
+  const allow = new Set((cfg.allowedPeers ?? []).map((p) => p.trim()).filter(Boolean));
   if (allow.size === 0) throw new Error("必须指定要读的会话。空白名单不启动。");
 
   const self = cfg.selfId || resolveSelf(cfg.dbDir);
@@ -209,40 +219,50 @@ export function readWeChatSessions(
 
   for (const peer of allow) {
     const table = msgTable(peer);
-    const file = findTable(cfg.dbDir, table);
-    if (!file) continue;
+    const files = findTables(cfg.dbDir, table);
+    if (!files.length) continue;
 
-    const db = open(file);
-    let rows: MsgRow[] = [];
-    try {
-      rows = db
-        .prepare(
-          `SELECT local_id, real_sender_id, create_time, local_type, message_content ` +
-            `FROM "${table}" WHERE create_time >= ? ORDER BY create_time DESC LIMIT ?`,
-        )
-        .all(Math.floor(since / 1000), limit) as MsgRow[];
-    } finally {
-      db.close();
+    // 每个分片各取最近 limit 条，合并后统一排序再截断。
+    const collected: { row: MsgRow; file: string }[] = [];
+    for (const file of files) {
+      const db = open(file);
+      try {
+        const part = db
+          .prepare(
+            `SELECT local_id, real_sender_id, create_time, local_type, message_content ` +
+              `FROM "${table}" WHERE create_time >= ? ORDER BY create_time DESC LIMIT ?`,
+          )
+          .all(Math.floor(since / 1000), limit) as MsgRow[];
+        for (const row of part) collected.push({ row, file });
+      } finally {
+        db.close();
+      }
     }
-    if (!rows.length) continue;
+    if (!collected.length) continue;
+    collected.sort((a, b) => a.row.create_time - b.row.create_time);
+    const kept = collected.slice(-limit);
 
-    const senders = nameMap(file);
-    const messages: Message[] = rows
-      .reverse()
-      .map((r) => {
+    // Name2Id 的 rowid 只在各自的库里有效，不能跨库混用。
+    const nameCache = new Map<string, Map<number, string>>();
+    const messages: Message[] = kept.map(({ row: r, file }) => {
+      let senders = nameCache.get(file);
+      if (!senders) {
+        senders = nameMap(file);
+        nameCache.set(file, senders);
+      }
         const from = senders.get(Number(r.real_sender_id)) ?? "";
         const mine = !!self && from === self;
         const text = r.message_content == null ? "" : String(r.message_content);
         const readable = Number(r.local_type) === TEXT && !!text.trim() && !looksLikeXml(text);
-        return {
-          id: `${peer}:${r.local_id}`,
-          sender: mine ? ("self" as const) : ("other" as const),
-          senderName: mine ? "我" : (names.get(from) ?? from),
-          text: readable ? text : "",
-          timestamp: String(Math.floor(Number(r.create_time))),
-          kind: readable ? ("text" as const) : ("unreadable" as const),
-        };
-      });
+      return {
+        id: `${peer}:${file}:${r.local_id}`,
+        sender: mine ? ("self" as const) : ("other" as const),
+        senderName: mine ? "我" : (names.get(from) ?? from),
+        text: readable ? text : "",
+        timestamp: String(Math.floor(Number(r.create_time))),
+        kind: readable ? ("text" as const) : ("unreadable" as const),
+      };
+    });
 
     out.push({
       peer: names.get(peer) ?? peer,

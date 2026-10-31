@@ -35,28 +35,12 @@ export type DecisionsConfig = {
   apiKey: string;
   protocol: "decisions";
 };
-export type LocalConfig = {
-  engine: "local";
-  provider: string;
-  name: string;
-  endpoint: string;
-  model: string;
-  apiKey: string;
-  protocol: "local";
-  dialect: "systemone" | "laya" | "anyjev";
-};
 export type ActiveConfig =
-  ProviderConfig | LlmConfig | DecisionsConfig | LiquidConfig | LocalConfig;
-// Maps the preset id to the wire dialect the local server speaks.
-// Laya in JEV_STRICT mode speaks the System One wire protocol (/v1/systemone),
-// so the "laya" preset uses the verified "systemone" dialect. The dedicated
-// "laya" dialect (native /decide route) is experimental and not yet run against
-// a live server. AnyJev wraps a local LLM and is also unverified here.
-const LOCAL_DIALECTS: Record<string, LocalConfig["dialect"]> = {
-  laya: "systemone",
-  anyjev: "anyjev",
-  "local-server": "systemone",
-};
+  ProviderConfig | LlmConfig | DecisionsConfig | LiquidConfig;
+/** 本机地址免 Key：Ollama、自建服务这类不需要凭据。 */
+function isLocalUrl(baseUrl: string): boolean {
+  return /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/.test(baseUrl);
+}
 export const modelConfigPath = resolve(
   process.env.CRUSH_CONFIG_PATH || ".runtime/model.json",
 );
@@ -69,7 +53,6 @@ const schema = z
       "jev",
       "decisions",
       "systemone",
-      "local",
     ]),
     baseUrl: z.string().trim().max(500),
     model: z.string().trim().max(200),
@@ -85,10 +68,9 @@ export function parseSettings(input: unknown): ModelSettings {
   const preset = MODEL_PRESETS.find((p) => p.id === s.preset);
   if (!preset || (s.preset !== "custom" && s.protocol !== preset.protocol))
     throw new ConfigurationError("服务商与接口类型不匹配。");
-  const isLocal = /^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(s.baseUrl);
-  if (s.protocol === "local" || isLocal) {
-    // 指向本机的服务不校验凭据，留空是正常状态。补一个占位符，
-    // 免得落进下面那套云端 Key 的格式校验。
+  // 指向本机的服务不校验凭据，留空是正常状态。补一个占位符，
+  // 免得落进下面那套云端 Key 的格式校验。
+  if (isLocalUrl(s.baseUrl)) {
     s.apiKey = s.apiKey || "local";
   } else if (
     !s.apiKey ||
@@ -144,9 +126,8 @@ export function parseSettings(input: unknown): ModelSettings {
   s.baseUrl = u.href
     .replace(/\/+$/, "")
     .replace(/\/(chat\/completions|messages)$/, "");
-  // Local engines are user-operated, so their address has to be adjustable
-  // (ports, containers, another machine on the LAN).
-  if (s.preset !== "custom" && s.protocol !== "local" && s.baseUrl !== preset.baseUrl)
+  // 本机服务的地址要能改（端口、容器、局域网另一台机器），所以不拿预设地址卡死。
+  if (s.preset !== "custom" && !isLocalUrl(s.baseUrl) && s.baseUrl !== preset.baseUrl)
     throw new ConfigurationError(
       "此平台的地址固定；其他区域或代理地址请选择“其他兼容服务”。",
     );
@@ -166,17 +147,6 @@ export function settingsConfig(s: ModelSettings): ActiveConfig {
       model: "gpt-6-luna",
       apiKey: s.apiKey,
       protocol: "decisions",
-    };
-  if (s.protocol === "local")
-    return {
-      engine: "local",
-      provider: s.preset,
-      name: MODEL_PRESETS.find((p) => p.id === s.preset)!.name,
-      endpoint: s.baseUrl,
-      model: s.model,
-      apiKey: s.apiKey,
-      protocol: "local",
-      dialect: LOCAL_DIALECTS[s.preset] ?? "systemone",
     };
   return {
     engine: "llm",
@@ -225,9 +195,7 @@ export function configFingerprint(config: ActiveConfig): string {
             ? "decisions-adapter-v1"
             : config.engine === "liquid"
               ? "liquid-adapter-v1"
-              : config.engine === "local"
-                ? `local-adapter-v1:${config.dialect}`
-                : "llm-adapter-v2"
+              : "llm-adapter-v2"
           : "llm-adapter-v1",
       ]),
     )
@@ -275,10 +243,10 @@ export function publicSettings() {
     };
   } catch {
     return {
-      preset: "deepseek",
-      protocol: "openai" as const,
-      baseUrl: MODEL_PRESETS[0].baseUrl,
-      model: MODEL_PRESETS[0].model,
+      preset: "typesafe",
+      protocol: "jev" as const,
+      baseUrl: "https://api.typesafe.ai",
+      model: "jev-1.13.0",
       jsonMode: true,
       configured: false,
       hasKey: false,
@@ -291,8 +259,9 @@ export function submittedSettings(body: unknown): ModelSettings {
   const parsed = schema.safeParse(body);
   if (!parsed.success) throw new ConfigurationError("配置格式不正确。");
   const s = parsed.data;
-  // 本地服务没有 Key，换地址也不需要重填；云端服务沿用原来的规则。
-  if (!s.apiKey && s.protocol !== "local") {
+  // 没填 Key 时沿用本机存过的那份；换了服务商或地址就得重填。
+  // 本机服务没有 Key 这件事由 parseSettings 里的占位符兜底，不在这里开口子。
+  if (!s.apiKey) {
     const old = activeConfig(),
       view = publicSettings();
     if (

@@ -91,16 +91,16 @@ export function planDirections(
   if (primary === "insufficient") return buildPlan("continue", overview, count);
 
   // A stated boundary is not a menu — but only when the model actually knows.
-  // Laya leans cautious: on an ordinary "周末有空吗" it scores the no-go
-  // question past the threshold about a third of the time. Locking the menu to
-  // one silent option on that basis reads as "it refused to answer", so a
-  // low-confidence boundary falls back to three sendable directions instead.
+  // Some judges lean cautious: an ordinary "周末有空吗" can push the no-go
+  // question past the threshold. Locking the menu to one silent option on that
+  // basis reads as "it refused to answer", so a low-confidence boundary falls
+  // back to three sendable directions instead.
   if (overview.boundaryApplied || primary === "respect") {
     if (overview.affinity.status === "clear") {
       return [{ action: "respect", source: "primary" }];
     }
     return buildPlan("continue", overview, count);
-    // （status 非 clear 就当没看懂：Laya 的边界判断在低置信度下不成立。）
+    // status 非 clear 就当没看懂：边界判断在低置信度下不成立。
   }
 
   return buildPlan(primary, overview, count);
@@ -190,7 +190,7 @@ export function buildDraftPrompt(
       `对话最近内容（从电脑端微信库导出，中间可能有没同步、已删除或跨了很久的消息，` +
       `不是一段连续的对话，别假定前后句是接着说的）：\n${recent}\n\n` +
       (signals
-        ? `本地判断模型对这段对话的评分（是概率，只当语气参考，别把数字写进回复）：\n${signals}\n\n`
+        ? `判断模型对这段对话的评分（是概率，只当语气参考，别把数字写进回复）：\n${signals}\n\n`
         : "") +
       profileBlock(profile) +
       `关系阶段：${STAGES[overview.stage] ?? "未确定"}\n` +

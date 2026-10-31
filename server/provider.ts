@@ -9,7 +9,6 @@ import {
   decodeDecisions,
   planDecisionsBatches,
 } from "./openai-decisions";
-import { evaluateLocalDecision } from "./local-decision";
 
 const probability = z.number().min(0).max(1);
 const distribution = z.record(probability);
@@ -177,8 +176,6 @@ export async function evaluate(
       controller.abort();
     }
   }
-  if ("engine" in config && config.engine === "local")
-    return evaluateLocalDecision(payload, config, signal, fetchImpl);
   return validateResult(
     await requestProvider(
       config,

@@ -9,9 +9,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { startStubDecisionServer } from "../tools/stub-decision-server";
 import { runPipeline } from "../server/pipeline";
-import { renderCandidates, renderReport } from "../server/report";
 import { ACTIONS } from "../shared/types";
-import type { LocalConfig } from "../server/model-config";
+import { PROVIDERS, type ProviderConfig } from "../server/provider-config";
 import type { Message } from "../shared/types";
 import type { NormalizedSession, SourceAdapter } from "../shared/sources";
 
@@ -31,16 +30,14 @@ function inlineSource(sessions: NormalizedSession[]): SourceAdapter {
   };
 }
 
-function stubConfig(endpoint: string): LocalConfig {
+function stubConfig(endpoint: string): ProviderConfig {
   return {
-    engine: "local",
-    provider: "stub",
+    ...PROVIDERS.typesafe,
+    provider: "typesafe",
     name: "stub",
     endpoint,
     model: "stub-decision-engine",
-    apiKey: "local",
-    protocol: "local",
-    dialect: "systemone",
+    apiKey: "stub",
   };
 }
 
@@ -116,7 +113,7 @@ test("a stated boundary collapses the menu to respect", async () => {
   }
 });
 
-test("renderReport prints the numbers, not just the verdict", async () => {
+test("a report carries the numbers, not just the verdict", async () => {
   const stub = await startStubDecisionServer();
   try {
     const [r] = await runPipeline({
@@ -124,18 +121,14 @@ test("renderReport prints the numbers, not just the verdict", async () => {
       decisionConfig: stubConfig(stub.endpoint),
       relation: "crush",
     });
-    const out = renderReport(r);
-    assert.match(out, /好感度/);
-    assert.match(out, /阶段/);
-    assert.match(out, /逐句/);
-    assert.match(out, /情绪/);
-    assert.match(out, /意图/);
-    assert.match(out, /下一步/);
-    assert.match(out, /小满/);
-
-    const list = renderCandidates(r.candidates);
-    assert.match(list, /候选/);
-    assert.match(list, /1/);
+    assert.equal(r.peer, "小满");
+    assert.ok(r.overview, "要有整体判断");
+    assert.ok(r.overview.affinity.value !== undefined, "要有好感度");
+    assert.ok(r.overview.stage, "要有阶段");
+    assert.ok(r.overview.action, "要有下一步");
+    assert.ok(r.messages.length > 0, "要带上消息");
+    assert.ok(r.lines.length > 0, "逐句要跟着消息，不能只判末尾几条");
+    assert.ok(r.candidates.length > 0, "要有候选");
   } finally {
     await stub.close();
   }

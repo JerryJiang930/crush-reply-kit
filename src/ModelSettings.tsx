@@ -33,6 +33,10 @@ export function ModelSettings({
     jsonMode: initial.jsonMode,
     apiKey: "",
   });
+  // 本机服务（Ollama 那类）：没有 Key，地址可改，也没有可发现的模型列表。
+  const isLocal = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/.test(
+    form.baseUrl,
+  );
   const [models, setModels] = useState<string[]>([]),
     [busy, setBusy] = useState(""),
     [error, setError] = useState("");
@@ -130,8 +134,7 @@ export function ModelSettings({
       form.protocol === "jev" ||
       form.protocol === "decisions" ||
       form.protocol === "systemone" ||
-      // 本地服务的型号写在预设里，没有可发现的模型列表。
-      form.protocol === "local" ||
+      isLocal ||
       (!form.apiKey.trim() && !sameKey) ||
       !form.baseUrl
     )
@@ -179,7 +182,7 @@ export function ModelSettings({
             ))}
           </select>
         </label>
-        {form.protocol !== "local" && (
+        {!isLocal && (
           <div className="field">
             <span className="field-heading">
               <label htmlFor="model-api-key">API Key</label>{" "}
@@ -203,7 +206,7 @@ export function ModelSettings({
             />
           </div>
         )}
-        {form.protocol === "local" && (
+        {isLocal && (
           <label className="field">
             服务地址
             <input
@@ -255,7 +258,7 @@ export function ModelSettings({
             <div className="field">
               <span className="field-heading">
                 <label htmlFor="model-id">选择模型</label>
-                {form.protocol !== "local" && (
+                {!isLocal && (
                   <button
                     type="button"
                     className="text-button"
@@ -412,8 +415,8 @@ export function ModelSettings({
         </button>
       )}
       <p className="model-footnote">
-        {form.protocol === "local"
-          ? "本地服务不需要 Key。检测会真跑三道测试题，几十秒没有回应就说明服务没起来。"
+        {isLocal
+          ? "本机服务不需要 Key。检测会真跑三道测试题，几十秒没有回应就说明服务没起来。"
           : "Key 只保存在本机服务，不存进浏览器。检测会使用少量额度；聊天仅在分析时发给所选平台。"}
       </p>
     </form>

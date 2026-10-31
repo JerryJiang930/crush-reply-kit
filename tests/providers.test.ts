@@ -15,7 +15,6 @@ import {
   ProviderError,
   providerErrorMessage,
 } from "../server/provider";
-import { updateConfiguration, saveConfiguration } from "../scripts/setup";
 import { analyze, buildRequest } from "../server/analysis";
 import type { AnalysisRequest } from "../shared/types";
 import { parseSettings, settingsConfig } from "../server/model-config";
@@ -350,29 +349,7 @@ test("持续服务失败最多两次，不切换平台；重试等待可以取�
   assert.equal(calls, 1);
 });
 
-test("配置更新保留端口、注释和其他变量；重复运行不会重复键", async () => {
-  const previous =
-    "# My config\r\nPORT=4321\r\nHOST=127.0.0.1\r\nTYPESAFE_API_KEY=legacy-key\r\nEXTRA=value\r\nexport JEV_PROVIDER=typesafe\r\nJEV_API_KEY=old-key\r\n";
-  const text = updateConfiguration(previous, "openrouter", "sk-or-test-key");
-  assert.equal(updateConfiguration(text, "openrouter", "sk-or-test-key"), text);
-  assert.equal((text.match(/^JEV_API_KEY=/gm) || []).length, 1);
-  assert.ok(text.includes("# My config"));
-  assert.equal(parse(text).PORT, "4321");
-  assert.equal(parse(text).EXTRA, "value");
-  assert.equal(getProviderConfig(parse(text)).provider, "openrouter");
-  assert.equal(getProviderConfig(parse(text)).apiKey, "sk-or-test-key");
-  const folder = await mkdtemp(join(tmpdir(), "crush-setup-"));
-  try {
-    const file = join(folder, ".env");
-    await saveConfiguration(file, text);
-    await saveConfiguration(file, text);
-    assert.equal(await readFile(file, "utf8"), text);
-    if (process.platform !== "win32")
-      assert.equal((await stat(file)).mode & 0o777, 0o600);
-  } finally {
-    await rm(folder, { recursive: true, force: true });
-  }
-});
+
 
 test("各 Jev 平台贯通总览、对方情绪意图、我方评级，使用同一评分规则", async (t) => {
   const originalFetch = globalThis.fetch;

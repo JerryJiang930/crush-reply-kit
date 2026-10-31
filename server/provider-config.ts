@@ -30,8 +30,18 @@ export const PROVIDERS = {
   },
 } as const;
 export type Provider = keyof typeof PROVIDERS;
-export type ProviderConfig = (typeof PROVIDERS)[Provider] & {
+/**
+ * 运行时的判别服务配置。字段用 string 而不是 PROVIDERS 的字面量：
+ * endpoint 要能被覆盖（测试指向本机 stub，用户指向自建网关），
+ * model 也是同理。
+ */
+export type ProviderConfig = {
   provider: Provider;
+  name: string;
+  endpoint: string;
+  model: string;
+  keyEnv: string;
+  keyUrl: string;
   apiKey: string;
 };
 

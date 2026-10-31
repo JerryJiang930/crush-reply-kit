@@ -8,8 +8,8 @@
   font-size: 14px;
   --muted: #6c7072;
   --line: #dedfe0;
-  --accent: #497563;
-  --focus: #497563;
+  --accent: #a86b82;
+  --focus: #a86b82;
 }
 * {
   box-sizing: border-box;
@@ -45,7 +45,7 @@ button:hover:not(:disabled) {
 button:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 2px solid #528973;
+  outline: 2px solid #885e6e;
   outline-offset: 3px;
 }
 h1,
@@ -99,8 +99,8 @@ h2 {
   width: 32px;
   height: 32px;
   border-radius: 4px;
-  background: #b5c7ba;
-  color: #344e3e;
+  background: #de99b4;
+  color: #4f3640;
   font-size: 16px;
   display: grid;
   place-items: center;
@@ -111,7 +111,7 @@ h2 {
   border-radius: 5px;
 }
 .chat-rail .rail-active {
-  color: #129b56;
+  color: #7b5463;
 }
 .rail-settings {
   margin-top: auto;
@@ -279,8 +279,8 @@ h2 {
   font-size: 16px;
 }
 .avatar.mine {
-  background: #b8cbbd;
-  color: #405f48;
+  background: #e39cb7;
+  color: #60424e;
 }
 .message-content {
   min-width: 0;
@@ -316,7 +316,7 @@ h2 {
   transform: rotate(45deg);
 }
 .self .bubble {
-  background: #95ec69;
+  background: #e29cb7;
 }
 .self .bubble:before {
   left: auto;
@@ -346,9 +346,9 @@ h2 {
   letter-spacing: 0.1px;
 }
 .emotion-happy {
-  --tag-ink: #35765a;
-  --tag-fill: #e3f1e8;
-  --tag-line: #c7dfd0;
+  --tag-ink: #6e4c59;
+  --tag-fill: #f5e9ee;
+  --tag-line: #f8abc9;
 }
 .emotion-caring {
   --tag-ink: #a36729;
@@ -469,7 +469,7 @@ h2 {
 }
 .chat-insights strong {
   font-size: 12px;
-  color: #3e5548;
+  color: #583d48;
   font-weight: 500;
   white-space: nowrap;
 }
@@ -483,7 +483,7 @@ h2 {
   flex: none;
 }
 .action-summary > svg {
-  color: #829087;
+  color: #8a7f85;
 }
 .composer {
   grid-column: 2;
@@ -529,7 +529,7 @@ h2 {
 }
 .send {
   background: #f1f2f1;
-  color: #16824a;
+  color: #694955;
   border-radius: 4px;
   padding: 6px 18px;
   font-size: 13px;
@@ -539,7 +539,7 @@ h2 {
   display: none;
 }
 .send:hover:not(:disabled) {
-  background: #e7ede8;
+  background: #f2e6ec;
 }
 .analysis-status {
   display: flex;
@@ -552,7 +552,7 @@ h2 {
 .analysis-status button {
   font-size: 11px;
   padding: 2px 5px;
-  color: #43745a;
+  color: #724e5c;
 }
 .analysis-status .completed {
   display: flex;
@@ -570,7 +570,7 @@ h2 {
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: #5f9273;
+  background: #936577;
   animation: pulse 1s infinite;
 }
 .empty {
@@ -594,7 +594,7 @@ h2 {
 }
 .text-button {
   font-size: 12px;
-  color: #5d806b;
+  color: #855c6c;
   padding: 6px 9px;
   border-radius: 4px;
 }
@@ -672,7 +672,7 @@ blockquote {
 .probability-track i {
   height: 100%;
   display: block;
-  background: #85a492;
+  background: #b17a8f;
   border-radius: inherit;
 }
 .overlay {
@@ -726,9 +726,9 @@ blockquote {
   border-radius: 6px;
 }
 .role-options button.selected {
-  border-color: #229b62;
+  border-color: #825969;
   background: #ebf6ee;
-  color: #14844d;
+  color: #6b4956;
 }
 .field {
   display: flex;
@@ -759,11 +759,11 @@ blockquote {
   margin-top: 12px;
 }
 .primary {
-  background: #168c51;
+  background: #714e5c;
   color: white;
 }
 .primary:hover:not(:disabled) {
-  background: #147c48;
+  background: #8f5670;
 }
 .secondary {
   background: #f3f3f3;
@@ -796,10 +796,10 @@ blockquote {
   color: var(--muted);
 }
 .primary {
-  background: #43785c;
+  background: #a86b82;
 }
 .primary:hover:not(:disabled) {
-  background: #35684d;
+  background: #8f5670;
 }
 .modal {
   box-shadow: 0 20px 70px #15201b2b;
@@ -1069,7 +1069,7 @@ blockquote {
 }
 .model-settings input:focus,
 .model-settings select:focus {
-  outline: 2px solid #97bc9d;
+  outline: 2px solid #c98aa2;
   outline-offset: 2px;
 }
 .field-heading {
@@ -1082,7 +1082,7 @@ blockquote {
 .text-button {
   font-size: 12px;
   font-weight: 400;
-  color: #478158;
+  color: #7c5564;
   text-decoration: none;
 }
 .text-button {
@@ -1141,10 +1141,10 @@ blockquote {
 }
 .model-value { display:flex; align-items:center; position:relative; }
 .model-value input { width:100%; padding-right:42px !important; }
-.model-picker-toggle { position:absolute; right:4px; top:4px; bottom:4px; width:36px; border:0; background:transparent; color:#5b7465; font-size:22px; cursor:pointer; }
+.model-picker-toggle { position:absolute; right:4px; top:4px; bottom:4px; width:36px; border:0; background:transparent; color:#7b5564; font-size:22px; cursor:pointer; }
 .model-picker-panel { margin-top:8px; padding:8px; border-radius:9px; background:#f5f8f6; }
 .model-picker-panel input { margin-bottom:6px; }
 .model-picker .model-options { max-height:210px; overflow:auto; }
 .model-picker .model-options button { display:flex; justify-content:space-between; gap:12px; width:100%; padding:10px; border:0; border-radius:5px; text-align:left; background:transparent; color:#303b34; font:inherit; cursor:pointer; word-break:break-all; }
-.model-picker .model-options button:hover,.model-picker .model-options button:focus-visible { background:#e6eee9; outline:none; }
-.model-picker .model-options button[aria-selected="true"] { color:#28603f; background:#dcebe2; }
+.model-picker .model-options button:hover,.model-picker .model-options button:focus-visible { background:#f4e8ee; outline:none; }
+.model-picker .model-options button[aria-selected="true"] { color:#8f5670; background:#f4e3ea; }

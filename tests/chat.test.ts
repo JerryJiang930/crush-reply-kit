@@ -16,7 +16,7 @@ import {
 import { runPipeline } from "../server/pipeline";
 import { buildDraftPrompt, judgmentSignals } from "../server/candidates";
 import { startStubDecisionServer } from "../tools/stub-decision-server";
-import type { LocalConfig } from "../server/model-config";
+import { PROVIDERS, type ProviderConfig } from "../server/provider-config";
 
 test("stripReasoning drops the Qwen3 thinking block", () => {
   assert.equal(
@@ -114,7 +114,7 @@ test("normalizeChatConfig requires a key for hosted presets", () => {
 });
 
 test("resolveChatConfig returns null when nothing is configured", () => {
-  const dir = mkdtempSync(join(tmpdir(), "replysmith-chat-"));
+  const dir = mkdtempSync(join(tmpdir(), "crush-reply-kit-chat-"));
   assert.equal(readChatConfigFile(join(dir, "nope.json")), null);
   // Point both sources at emptiness.
   const saved = { ...process.env };
@@ -127,7 +127,7 @@ test("resolveChatConfig returns null when nothing is configured", () => {
 });
 
 test("resolveChatConfig lets env override the file per field", () => {
-  const dir = mkdtempSync(join(tmpdir(), "replysmith-chat-"));
+  const dir = mkdtempSync(join(tmpdir(), "crush-reply-kit-chat-"));
   const file = join(dir, "chat.json");
   writeFileSync(file, JSON.stringify({ preset: "ollama", model: "qwen3:4b" }));
   const saved = process.env.DRAFT_MODEL;
@@ -200,15 +200,13 @@ test("pipeline uses the draft text and keeps the strategy out of it", async () =
   const stub = await startStubDecisionServer({ choices: { action: "ask" } });
   const { server, base } = await startFakeChat("<｜end▁of▁thinking｜>那你先忙，晚点再说。");
   try {
-    const decisionConfig: LocalConfig = {
-      engine: "local",
-      provider: "stub",
+    const decisionConfig: ProviderConfig = {
+      ...PROVIDERS.typesafe,
+      provider: "typesafe",
       name: "stub",
       endpoint: stub.endpoint,
       model: "stub-decision-engine",
-      apiKey: "local",
-      protocol: "local",
-      dialect: "systemone",
+      apiKey: "stub",
     };
     const results = await runPipeline({
       source: {
@@ -242,15 +240,13 @@ test("pipeline uses the draft text and keeps the strategy out of it", async () =
 test("pipeline falls back to the structured suggestion when the draft model is down", async () => {
   const stub = await startStubDecisionServer();
   try {
-    const decisionConfig: LocalConfig = {
-      engine: "local",
-      provider: "stub",
+    const decisionConfig: ProviderConfig = {
+      ...PROVIDERS.typesafe,
+      provider: "typesafe",
       name: "stub",
       endpoint: stub.endpoint,
       model: "stub-decision-engine",
-      apiKey: "local",
-      protocol: "local",
-      dialect: "systemone",
+      apiKey: "stub",
     };
     const results = await runPipeline({
       source: {
@@ -324,7 +320,7 @@ test("判断摘要进提示词", () => {
   assert.match(signals, /对方最近这几句的判断/);
 
   const prompt = buildDraftPrompt(overview, "对方：累死了", "continue", {}, signals);
-  assert.match(prompt.user, /本地判断模型对这段对话的评分/);
+  assert.match(prompt.user, /判断模型对这段对话的评分/);
   assert.match(prompt.user, /好感度 25/);
 });
 

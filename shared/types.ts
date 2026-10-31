@@ -61,6 +61,17 @@ export type Snapshot = {
   comparable: boolean;
 };
 export type Task = "overview" | "other_messages" | "self_message";
+
+/** 聊天记录读不出来的部分：多大、做什么、什么脾气、什么关系。THINK 只看得见文本，
+ * 这些得人补，补了判断才贴着这个具体的人，而不是泛泛地按枚举打。 */
+export type AnalysisProfile = {
+  age?: string;
+  role?: string;
+  note?: string;
+  /** 三个选项装不下时写在这里，原样进提示词，判断和起草都看得到。 */
+  relationNote?: string;
+};
+
 export type AnalysisRequest = {
   memory?: Pick<MemoryEvent, "id" | "kind" | "status" | "resolvedBy">[];
   revision: number;
@@ -68,6 +79,8 @@ export type AnalysisRequest = {
   messages: Message[];
   task: Task;
   targetIds: string[];
+  /** 可选：对方是谁。填了就并进 state，让判断模型的基准跟着人走。 */
+  profile?: AnalysisProfile;
 };
 export type AnalysisResponse = {
   memoryUpdates?: MemoryUpdate[];
