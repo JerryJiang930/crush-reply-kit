@@ -2,14 +2,21 @@
 //
 // 列表从解密库里按会话聚合出来，用 wxid 当 key、昵称当显示名——改备注不该
 // 让一个人变成两个人。设定跟在列表一起返回，前端点到谁就知道要不要弹框问。
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Router } from "express";
 import { z } from "zod";
+import type { SessionReport } from "../shared/pipeline-types";
 import { listWeChatPeers } from "../shared/wechat-db";
-import { listKnownPeers, readPeerState, writePeerState } from "./peer-state";
+import {
+  listKnownPeers,
+  readPeerReport,
+  readPeerState,
+  writePeerState,
+  type PeerReportFile,
+} from "./peer-state";
 import { syncWeChat } from "./wechat-sync";
 
 export const peersRouter = Router();
@@ -92,6 +99,46 @@ peersRouter.post("/sync", async (_req, res) => {
 /** 没有库目录时也能用：已经建过基线的人。 */
 peersRouter.get("/known", (_req, res) => {
   res.json({ peers: listKnownPeers() });
+});
+
+const lastReportPath = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  ".runtime",
+  "last-report.json",
+);
+
+/** 老版本只留了全局一份报告，还没按人拆。按人拆之前，先从这里兜一次底。 */
+function legacyReportFor(peer: string): PeerReportFile | null {
+  try {
+    const raw = JSON.parse(readFileSync(lastReportPath, "utf8")) as {
+      at?: number;
+      relation?: string;
+      reports?: SessionReport[];
+    };
+    const reports = (raw.reports ?? []).filter(
+      (r) => r.peerId === peer || r.peer === peer,
+    );
+    if (!reports.length) return null;
+    return { at: raw.at ?? Date.now(), relation: raw.relation, reports };
+  } catch {
+    return null;
+  }
+}
+
+/** 这个人上次分析出来的那份，点回他直接看，不用为了看结果再点一次「开始」。 */
+peersRouter.get("/report", (req, res) => {
+  const peer = String(req.query.peer ?? "").trim();
+  if (!peer) {
+    res.status(400).json({ error: "缺少 peer。" });
+    return;
+  }
+  const saved = readPeerReport(peer) ?? legacyReportFor(peer);
+  if (!saved) {
+    res.status(404).json({ error: "这个人还没分析过。" });
+    return;
+  }
+  res.json(saved);
 });
 
 const profileSchema = z

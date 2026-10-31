@@ -5,7 +5,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Profile } from "../shared/pipeline-types";
+import type { Profile, SessionReport } from "../shared/pipeline-types";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const peersDir = resolve(here, "..", ".runtime", "peers");
@@ -88,12 +88,51 @@ export function writePeerState(peer: string, patch: Partial<PeerState>): void {
   }
 }
 
+/**
+ * 每个人最近一次的分析单独一个文件。存下来是为了点回这个人能直接看上次的判断，
+ * 不用为了看结果再点一次「开始」重跑。这里只做本地缓存，删掉就是下次重跑。
+ */
+export type PeerReportFile = {
+  at: number;
+  relation?: string;
+  reports: SessionReport[];
+};
+
+function reportFile(peer: string): string {
+  return join(peersDir, `${safeName(peer)}.report.json`);
+}
+
+export function readPeerReport(peer: string): PeerReportFile | null {
+  try {
+    const f = reportFile(peer);
+    if (!existsSync(f)) return null;
+    return JSON.parse(readFileSync(f, "utf8")) as PeerReportFile;
+  } catch {
+    return null;
+  }
+}
+
+export function writePeerReport(peer: string, data: PeerReportFile): void {
+  try {
+    mkdirSync(peersDir, { recursive: true });
+    writeFileSync(reportFile(peer), JSON.stringify(data));
+  } catch {
+    /* 存不下只是下次要重跑，不影响这次结果 */
+  }
+}
+
 /** 所有存过状态的人，最近活跃的排前面。 */
 export function listKnownPeers(): PeerState[] {
   try {
     if (!existsSync(peersDir)) return [];
     return readdirSync(peersDir)
-      .filter((f) => f.endsWith(".json"))
+      // 摘要和报告是同一个人的另外两个文件，不是「一个人」，别混进来。
+      .filter(
+        (f) =>
+          f.endsWith(".json") &&
+          !f.endsWith(".summary.json") &&
+          !f.endsWith(".report.json"),
+      )
       .map((f) => {
         try {
           return JSON.parse(readFileSync(join(peersDir, f), "utf8")) as PeerState;

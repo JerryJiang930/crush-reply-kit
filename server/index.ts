@@ -14,6 +14,7 @@ import {
 import { settingsRouter } from "./settings-api";
 import { chatSettingsRouter } from "./chat-settings-api";
 import { peersRouter } from "./peers-api";
+import { writePeerReport } from "./peer-state";
 import { runPipelineApi, pipelineRequestSchema } from "./pipeline-api";
 import { ProviderError, providerErrorMessage } from "./provider";
 const app = express();
@@ -191,6 +192,14 @@ app.post("/api/pipeline", async (req, res) => {
             reports,
           }),
         );
+        // 每个人也留一份：点回这个人直接看，不用为看结果再点一次「开始」。
+        if (valid.data.source.kind === "wechat") {
+          writePeerReport(valid.data.source.peer, {
+            at: Date.now(),
+            relation: valid.data.relation,
+            reports,
+          });
+        }
       } catch {
         /* 存不下不影响本次结果 */
       }

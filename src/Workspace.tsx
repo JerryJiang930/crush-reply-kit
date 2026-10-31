@@ -158,6 +158,51 @@ function LineRow({ report, index }: { report: SessionReport; index: number }) {
   );
 }
 
+/** 还没有报告时的空壳：中间和右侧保持原来的两列，只是没有内容。 */
+function EmptyReport({ name }: { name: string }) {
+  return (
+    <div className="ws-report ws-report-empty">
+      <section className="ws-chat">
+        <header className="ws-chat-bar">
+          <span>{name || "还没有选人"}</span>
+          <span className="ws-muted">这里会显示这个人的聊天记录</span>
+        </header>
+        <div className="ws-chat-scroll">
+          <div className="ws-empty">
+            {name ? (
+              <>
+                <p>这个人还没有分析过。</p>
+                <p className="ws-muted">
+                  点左下角「开始」做一次基线，之后点他就能直接看到这份判断。
+                </p>
+              </>
+            ) : (
+              <>
+                <p>左边选个人。</p>
+                <p className="ws-muted">第一次读某个人会用完整历史做基线。</p>
+              </>
+            )}
+          </div>
+        </div>
+      </section>
+      <aside className="ws-meta">
+        <div className="ws-head">
+          <h2>{name || "—"}</h2>
+        </div>
+        <div className="ws-score">
+          <span className="ws-big">—</span>
+          <div>
+            <div className="ws-score-label">还没有判断</div>
+            <div className="ws-muted">
+              分析过之后，这里会出好感度、阶段和可发的方向。
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
 function ReportView({
   report,
   relationNote,
@@ -551,7 +596,9 @@ export default function Workspace() {
     })();
   }, []);
 
-  function pickPeer(p: PeerRow) {
+  // 点一个人就看这个人的东西：有存过的报告直接摆出来，没有就清空，
+  // 不把上一个人的判断留在中间让人误会。
+  async function pickPeer(p: PeerRow) {
     setPeer(p.peer);
     setAge(p.profile?.age ?? "");
     setRole(p.profile?.role ?? "");
@@ -562,8 +609,33 @@ export default function Workspace() {
     // 已经填过关系基准的人，点进来就用他写的那句话定判断基准，
     // 而不是停留在默认的"刚认识"。没填过的留给下拉自己选。
     if (note.trim()) setRelation(guessRelation(note));
-    // 第一次点这个人就问一句「对方是谁」——这些聊天记录里读不出来。
-    if (!p.profile) setProfileOpen(true);
+    setError("");
+    setNotice("");
+    // 先清掉上一个人的报告，接口回来之前别让人看到错的内容。
+    setReports([]);
+    setActive(0);
+    try {
+      const res = await fetch(`/api/peers/report?peer=${encodeURIComponent(p.peer)}`);
+      if (res.ok) {
+        const saved = (await res.json()) as {
+          relation?: string;
+          reports: SessionReport[];
+        };
+        if (saved.reports?.length) {
+          setReports(saved.reports);
+          setActive(0);
+          if (saved.relation) setRelation(saved.relation as Relation);
+          // 有过基线，下次「开始」默认接着往前更，而不是从头再来一遍。
+          setMode("update");
+          return;
+        }
+      }
+    } catch {
+      /* 读不到就当没存过 */
+    }
+    setReports([]);
+    setActive(0);
+    setMode("baseline");
   }
 
   async function saveProfile() {
@@ -659,6 +731,8 @@ export default function Workspace() {
   }
 
   const report = reports[active];
+  // 空版本要显示谁的名字：列表里有就用昵称，没有就留空，文案走通用那句。
+  const currentName = peers.find((p) => p.peer === peer)?.name ?? "";
 
   return (
     <div className="ws">
@@ -703,7 +777,7 @@ export default function Workspace() {
                       <li key={p.peer}>
                         <button
                           className={peer === p.peer ? "on" : ""}
-                          onClick={() => pickPeer(p)}
+                          onClick={() => void pickPeer(p)}
                         >
                           <span className="ws-peer-name">{p.name}</span>
                           <span className="ws-peer-meta">{when(p.lastMs)}</span>
@@ -842,15 +916,11 @@ export default function Workspace() {
         <main className="ws-main">
           {error && <p className="ws-error">{error}</p>}
           {notice && <p className="ws-muted">{notice}</p>}
-          {!report && !error && !notice && (
-            <div className="ws-empty">
-              <p>左边选个数据源，点开始。</p>
-              <p className="ws-muted">
-                第一次读某个人会用完整历史做基线，之后只补新消息。
-              </p>
-            </div>
+          {report ? (
+            <ReportView report={report} relationNote={relationNote} />
+          ) : (
+            <EmptyReport name={currentName} />
           )}
-          {report && <ReportView report={report} relationNote={relationNote} />}
         </main>
       </div>
 
